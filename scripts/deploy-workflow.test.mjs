@@ -211,4 +211,21 @@ describe("Cloudflare deploy workflow", () => {
     );
     expect(verifySection).toContain("analog-canvas.tokenzhang.com/editor");
   });
+
+  it("verifies package integrity before deploy and the serving declaration afterwards", () => {
+    const precheck = step("Verify the pinned MCP release before deployment");
+    expect(precheck).toContain(
+      "node scripts/verify-agent-manifest.mjs --asset-only",
+    );
+    expect(workflow.indexOf(precheck)).toBeLessThan(
+      workflow.indexOf("- name: Deploy the verified candidate"),
+    );
+    const verifySection = workflow.slice(
+      workflow.indexOf("Verify production deployment"),
+      workflow.indexOf("Roll back a failed deployment"),
+    );
+    expect(verifySection).toContain(
+      "node scripts/verify-agent-manifest.mjs https://analog-canvas.tokenzhang.com --manifest-only",
+    );
+  });
 });
