@@ -49,6 +49,7 @@ import {
   type NetlistNamingProfile,
 } from "./net-name-codec.js";
 import { normalizeIndependentSource } from "./source-waveform.js";
+import { withImplicitMosSupplies } from "./implicit-mos-supplies.js";
 
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 const MAX_CELLS = 1024;
@@ -886,7 +887,7 @@ function extractHierarchyInstance(
       nodes.splice(
         groundPortIndex(
           child,
-          childPorts.map((port) => ({ id: port.netIds[0]! })),
+          childPorts.map((port) => ({ id: port.netIds[0]!, name: port.name })),
         ),
         0,
         { pinName: GROUND_PORT_NAME, netName: callerGround },
@@ -1475,15 +1476,56 @@ function cellReachesGround(
  */
 function groundPortIndex(
   document: SchematicDocument,
-  ports: readonly { id: string }[],
+  ports: readonly { id: string; name?: string }[],
 ): number {
   const logicalNets = resolveDocumentLogicalNets(document);
   let index = 0;
   for (const [position, port] of ports.entries()) {
     const domain = logicalNets.byBaseNetId.get(port.id)?.powerDomain;
-    if (domain === "vdd") index = position + 1;
+    if (domain === "vdd" || port.name?.toUpperCase() === "VDD")
+      index = position + 1;
   }
   return index;
+}
+
+/** Allocate dialect names without changing authored references. Reserve existing
+ * legal names first so M1 and an imported XM1 remain two distinct devices.
+ * The shared IR supplies both exported cards and simulator signal paths.
+ */
+function projectSpiceReferences(cell: DesignNetlistCell): void {
+  const prefixes: Record<DesignNetlistInstance["deviceClass"], string> = {
+    mos: "M",
+    resistor: "R",
+    capacitor: "C",
+    inductor: "L",
+    diode: "D",
+    bjt: "Q",
+    "voltage-source": "V",
+    "current-source": "I",
+    switch: "S",
+    hierarchical: "X",
+    "net-marker": "",
+  };
+  const prefixFor = (instance: DesignNetlistInstance) =>
+    instance.invocationKind === "subcircuit"
+      ? "X"
+      : prefixes[instance.deviceClass];
+  const needsPrefix = (instance: DesignNetlistInstance) =>
+    !instance.reference.toUpperCase().startsWith(prefixFor(instance));
+  const used = new Set(
+    cell.instances
+      .filter((instance) => !needsPrefix(instance))
+      .map((instance) => instance.reference.toLowerCase()),
+  );
+  for (const instance of cell.instances) {
+    if (!needsPrefix(instance)) continue;
+    const base = `${prefixFor(instance)}${instance.reference}`;
+    let reference = base;
+    for (let suffix = 2; used.has(reference.toLowerCase()); suffix++)
+      reference = `${base}_${suffix}`;
+    used.add(reference.toLowerCase());
+    instance.reference = reference;
+  }
 }
 
 function extractCell(
@@ -1645,8 +1687,7 @@ function extractCell(
   for (const instance of [...document.instances].sort((left, right) =>
     left.id.localeCompare(right.id),
   )) {
-    if (instance.reference || !subcircuitDescriptor(instance.symbolId))
-      continue;
+    if (instance.reference) continue;
     const policy = referenceIndex.policyByInstanceId.get(instance.id);
     if (!policy) continue;
     const reference = nextReference(referenceIndex, policy, {
@@ -1694,11 +1735,17 @@ function extractCell(
   const cellPinInstanceIds = new Set(
     interfaceProjection.ports.flatMap((port) => port.interfaceInstanceIds),
   );
-  for (const instance of [...document.instances].sort((a, b) => {
+  for (const source of [...document.instances].sort((a, b) => {
     const left = a.reference ?? syntheticReferences.get(a.id) ?? a.id;
     const right = b.reference ?? syntheticReferences.get(b.id) ?? b.id;
     return compareText(left, right) || a.id.localeCompare(b.id);
   })) {
+    // Older/Agent-authored drawings can omit references on primitive devices
+    // too. Allocate only in this read-only projection, before dialect prefixes.
+    const generatedReference = syntheticReferences.get(source.id);
+    const instance = generatedReference
+      ? { ...source, reference: generatedReference }
+      : source;
     if (cellPinInstanceIds.has(instance.id)) continue;
     const binding = instance.netlist?.binding;
     const builtInSubcircuit = subcircuitDescriptor(instance.symbolId);
@@ -1779,6 +1826,7 @@ function analyzeDesign(
     rootAsTopLevel: options.rootAsTopLevel ?? false,
     groundPin: options.groundPin ?? "global",
   };
+  project = withImplicitMosSupplies(project, resolvedOptions);
   const diagnostics: NetlistDiagnostic[] = [];
   const documents = reachableDocuments(
     project,
@@ -1838,7 +1886,10 @@ function analyzeDesign(
       resolvedOptions,
       diagnostics,
     );
-    if (cell) cells.push(cell);
+    if (cell) {
+      if (resolvedOptions.format === "spice") projectSpiceReferences(cell);
+      cells.push(cell);
+    }
   }
   diagnostics.sort(
     (left, right) =>
