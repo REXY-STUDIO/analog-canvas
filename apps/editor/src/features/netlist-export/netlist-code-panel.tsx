@@ -1,5 +1,36 @@
-import { lazy, Suspense, useMemo, type CSSProperties } from "react";
+import {
+  lazy,
+  Suspense,
+  useMemo,
+  useLayoutEffect,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
+import type { ProjectStructureEdit } from "@icm/edit-engine";
+import {
+  planNetlistCodeEdit,
+  netlistInstanceAtLine,
+} from "./netlist-code-edit";
+import type { PrintedNetlistInstance } from "@icm/netlist";
 import type { CircuitProject } from "@icm/model";
+import {
+  inferNetlistProcess,
+  netlistFamilyTarget,
+  planNetlistProcess,
+} from "./netlist-process";
+import {
+  NETLIST_PROFILE_IDS,
+  NETLIST_PROFILE_LABELS,
+  NETLIST_QUICK_TARGET_FAMILIES,
+  NETLIST_DEVICE_TARGET_OPTIONS,
+  setNetlistDefaultTarget,
+  createNetlistExportProfile,
+  type NetlistExportProfile,
+  type NetlistProfileId,
+  type NetlistQuickTargetFamily,
+} from "./netlist-process-presets";
 import {
   createDesignNetlistExport,
   unfinishedDrawingDiagnostics,
@@ -23,6 +54,12 @@ export function NetlistCodePanel({
   onCopy,
   onReset,
   configurationError,
+  onApply,
+  onFocusInstance,
+  profiles,
+  selectedProcess,
+  onProcessChange,
+  onDeviceTargetChange,
 }: {
   project: CircuitProject;
   format: NetlistFormat;
@@ -33,7 +70,42 @@ export function NetlistCodePanel({
   onCopy(): void;
   onReset(): void;
   configurationError: string | null;
+  onApply(edits: ProjectStructureEdit[]): boolean;
+  onFocusInstance(instance: PrintedNetlistInstance | null): void;
+  profiles: Record<NetlistProfileId, NetlistExportProfile>;
+  selectedProcess: NetlistProfileId;
+  onProcessChange(id: NetlistProfileId): void;
+  onDeviceTargetChange(
+    family: NetlistQuickTargetFamily,
+    target: string,
+    process: NetlistProfileId,
+  ): void;
 }) {
+  const process =
+    selectedProcess === "custom"
+      ? "custom"
+      : inferNetlistProcess(project, selectedProcess);
+  const profile = profiles[process];
+  const [processError, setProcessError] = useState<string | null>(null);
+  function applyProcess(
+    next: NetlistExportProfile,
+    options: Parameters<typeof planNetlistProcess>[2] = {},
+  ) {
+    try {
+      const edits = planNetlistProcess(project, next, options);
+      if (edits.length && !onApply(edits))
+        throw new Error(
+          "Could not apply device mappings. The circuit has not changed.",
+        );
+      setProcessError(null);
+      return true;
+    } catch (error) {
+      setProcessError(
+        error instanceof Error ? error.message : "Could not apply process",
+      );
+      return false;
+    }
+  }
   const result = useMemo(
     () =>
       configurationError
@@ -42,6 +114,7 @@ export function NetlistCodePanel({
             format,
             namingProfile,
             portCase,
+            includeLocations: true,
           }),
     [project, format, namingProfile, portCase, configurationError],
   );
@@ -57,7 +130,68 @@ export function NetlistCodePanel({
         // netlist anybody should take away yet.
         (unfinished[0]?.message ?? null);
   const source = result?.status === "ready" ? result.file.text : "";
-  const visibleLines = netlistEditorVisibleLines(source);
+  const [draft, setDraft] = useState(source);
+  const [editBaseline, setEditBaseline] = useState(source);
+  const [applyError, setApplyError] = useState<string | null>(null);
+  const ownApply = useRef(false);
+  const dirty = draft !== editBaseline;
+  const conflict = dirty && source !== editBaseline;
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const focusRef = useRef(onFocusInstance);
+  focusRef.current = onFocusInstance;
+  useEffect(() => () => focusRef.current(null), []);
+  useLayoutEffect(() => {
+    if (!dirty || ownApply.current) {
+      setDraft(source);
+      setEditBaseline(source);
+      setApplyError(null);
+    }
+    ownApply.current = false;
+  }, [source]);
+  function apply() {
+    if (!dirty || conflict || result?.status !== "ready") return;
+    const plan = planNetlistCodeEdit(project, result, draftRef.current);
+    if (!plan.ok) {
+      setApplyError(plan.message);
+      return;
+    }
+    if (!plan.edits.length) {
+      setDraft(source);
+      setEditBaseline(source);
+      setApplyError(null);
+      return;
+    }
+    ownApply.current = true;
+    if (!onApply(plan.edits)) {
+      ownApply.current = false;
+      setApplyError(
+        "Edit rejected. Check the device prefix and duplicate names; the circuit keeps the last valid values.",
+      );
+      return;
+    }
+    setApplyError(null);
+  }
+  const applyRef = useRef(apply);
+  applyRef.current = apply;
+  useEffect(() => {
+    if (!dirty || conflict) return;
+    const timer = setTimeout(() => applyRef.current(), 500);
+    return () => clearTimeout(timer);
+  }, [draft, dirty, conflict]);
+  function focus(position: number) {
+    if (result?.status !== "ready") return onFocusInstance(null);
+    const plan = planNetlistCodeEdit(project, result, draftRef.current);
+    onFocusInstance(
+      plan.ok
+        ? netlistInstanceAtLine(draftRef.current, position, plan.instances)
+        : null,
+    );
+  }
+  const editError = conflict
+    ? "The canvas or Agent changed the netlist. Reload before applying your draft."
+    : applyError;
+  const visibleLines = netlistEditorVisibleLines(draft);
   return (
     <section
       className="netlist-profile-code netlist-live-code"
@@ -77,12 +211,31 @@ export function NetlistCodePanel({
             <option value="spectre">SCS</option>
           </select>
         </label>
+        <label>
+          <span>Process</span>
+          <select
+            aria-label="Netlist process"
+            value={process}
+            disabled={dirty}
+            onChange={(event) => {
+              const id = event.currentTarget.value as NetlistProfileId;
+              if (applyProcess(profiles[id])) onProcessChange(id);
+            }}
+          >
+            {NETLIST_PROFILE_IDS.map((id) => (
+              <option key={id} value={id}>
+                {NETLIST_PROFILE_LABELS[id]}
+              </option>
+            ))}
+          </select>
+        </label>
         <button
           type="button"
           className="netlist-code-copy"
           data-testid="copy-netlist-panel"
           aria-label="Copy netlist"
           title="Copy netlist"
+          disabled={dirty}
           onClick={onCopy}
         >
           <svg viewBox="0 0 20 20" aria-hidden="true">
@@ -110,7 +263,7 @@ export function NetlistCodePanel({
           fallback={
             <textarea
               aria-label="Loading Netlist code editor"
-              value={source}
+              value={draft}
               readOnly
             />
           }
@@ -118,9 +271,17 @@ export function NetlistCodePanel({
           <ProjectTextEditor
             ariaLabel="Netlist code"
             language="netlist"
-            value={source}
-            readOnly
-            invalid={!!error}
+            value={draft}
+            invalid={!!error || !!editError}
+            onChange={(text) => {
+              draftRef.current = text;
+              setDraft(text);
+              setApplyError(null);
+            }}
+            onEnter={apply}
+            onModEnter={apply}
+            onBlur={() => applyRef.current()}
+            onCursorChange={focus}
           />
         </Suspense>
       </div>
@@ -128,6 +289,62 @@ export function NetlistCodePanel({
         className="netlist-device-mapping"
         aria-label="Netlist output options"
       >
+        {NETLIST_QUICK_TARGET_FAMILIES.map((family) => {
+          const label =
+            family === "resistor"
+              ? "R"
+              : family === "capacitor"
+                ? "C"
+                : family === "inductor"
+                  ? "L"
+                  : family.toUpperCase();
+          const mapped = netlistFamilyTarget(project, family);
+          const current =
+            mapped === undefined ? profile.devices[family].target : mapped;
+          const target = current ?? "__mixed__";
+          return (
+            <label key={family}>
+              <span>{label}</span>
+              <select
+                aria-label={`${label} netlist target`}
+                value={target}
+                title={current ?? "Mixed or custom targets"}
+                disabled={dirty}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  if (
+                    applyProcess(
+                      setNetlistDefaultTarget(profile, family, value),
+                      { family },
+                    )
+                  ) {
+                    onDeviceTargetChange(family, value, process);
+                  }
+                }}
+              >
+                {current === null ? (
+                  <option value="__mixed__" disabled>
+                    Mixed / custom
+                  </option>
+                ) : null}
+                {[
+                  ...new Set([
+                    ...(current === null ? [] : [current]),
+                    ...NETLIST_DEVICE_TARGET_OPTIONS[process][family],
+                    profile.devices[family].target,
+                  ]),
+                ].map((value) => (
+                  <option key={value} value={value}>
+                    {value.replace(/^sky130_fd_pr__/u, "") ||
+                      (family === "nmos" || family === "pmos"
+                        ? "Unspecified"
+                        : "Ideal")}
+                  </option>
+                ))}
+              </select>
+            </label>
+          );
+        })}
         <div className="netlist-mapping-actions">
           <button
             type="button"
@@ -143,12 +360,36 @@ export function NetlistCodePanel({
           <button
             type="button"
             className="netlist-default-action"
-            onClick={onReset}
+            disabled={dirty}
+            onClick={() => {
+              if (applyProcess(createNetlistExportProfile("abstract")))
+                onReset();
+            }}
           >
             Default
           </button>
         </div>
       </div>
+      {dirty ? (
+        <div className="project-code-actions">
+          <button
+            type="button"
+            onClick={() => {
+              setDraft(source);
+              setEditBaseline(source);
+              setApplyError(null);
+              onFocusInstance(null);
+            }}
+          >
+            Reload
+          </button>
+        </div>
+      ) : null}
+      {editError ? <p role="alert">{editError}</p> : null}
+      {processError ? <p role="alert">{processError}</p> : null}
+      <p className="netlist-edit-hint">
+        Edit names, models and values · Enter to apply
+      </p>
       {error ? (
         <p role="alert">{error}</p>
       ) : result?.status === "ready" && result.placeholders.length ? (

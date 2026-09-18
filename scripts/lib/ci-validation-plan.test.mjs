@@ -3,6 +3,7 @@ import { readdir } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 import {
+  browserShardMatrix,
   formatCiValidationPlan,
   planCiValidation,
 } from "./ci-validation-plan.mjs";
@@ -15,6 +16,22 @@ function ciPlan(paths, options) {
 }
 
 describe("CI validation planning", () => {
+  it("uses two shards for bounded changes and four for broad affected coverage", () => {
+    expect(browserShardMatrix(ciPlan(["worker/gallery.ts"]))).toEqual([
+      "1/2",
+      "2/2",
+    ]);
+    const broad = ciPlan([
+      "apps/editor/src/app/App.tsx",
+      "apps/editor/src/features/simulation/spice-simulation-surface.tsx",
+    ]);
+    expect(broad.mode).toBe("focused");
+    expect(browserShardMatrix(broad)).toEqual(["1/4", "2/4", "3/4", "4/4"]);
+    expect(
+      browserShardMatrix(ciPlan(["apps/editor/src/lib/unmapped.ts"])),
+    ).toEqual(["1/2", "2/2"]);
+  });
+
   it("skips implementation jobs for documentation-only work", () => {
     expect(ciPlan(["docs/user/getting-started.md"])).toMatchObject({
       heavy: false,
@@ -149,6 +166,27 @@ describe("CI validation planning", () => {
           conversion,
           "apps/editor/e2e/manual-editor.spec.ts",
         ]),
+      );
+    }
+  });
+
+  it("keeps editable netlists and bundled examples on their browser regressions", () => {
+    const spec = "apps/editor/e2e/netlist-code-edit.spec.ts";
+    const paths = [
+      spec,
+      "apps/editor/e2e/editor-fixtures.ts",
+      "apps/editor/src/examples/two-stage-op-amp.icproj.json",
+      "apps/editor/src/features/project-code/project-text-editor.tsx",
+      "packages/netlist/src/export.ts",
+      "packages/netlist/src/printed-netlist.ts",
+      "packages/netlist/src/printers.ts",
+    ];
+    for (const changed of [...paths.map((path) => [path]), paths]) {
+      const plan = ciPlan(changed);
+      expect(plan.mode, changed.join(", ")).toBe("focused");
+      expect(plan.e2eArgs).toContain(spec);
+      expect(plan.e2eArgs).toContain(
+        "apps/editor/e2e/netlist-workflows.spec.ts",
       );
     }
   });

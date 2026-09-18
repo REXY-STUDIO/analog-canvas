@@ -9,6 +9,7 @@ import {
 import { fractionGeometry } from "@icm/derived";
 
 import {
+  revealPropertiesShelf,
   awaitEditorReady,
   editComponentPropertyCode,
   editDocumentStyleCode,
@@ -200,6 +201,7 @@ test("keeps every line of a multi-line note on its own line", async ({
   page,
 }) => {
   await page.goto("/editor");
+  await revealPropertiesShelf(page);
   await placeText(page, { x: 400, y: 220 });
   const editable = page.getByRole("textbox", { name: "Canvas text editor" });
   await editable.click();
@@ -755,6 +757,7 @@ test("edits an unrestricted device formula in the same visual annotation", async
     .click({ position: { x: 360, y: 240 } });
   await page.keyboard.press("Escape");
   await page.getByTestId("annotation-hit-instance-label-R1").dblclick();
+  await page.getByRole("checkbox", { name: "Use display alias" }).check();
   await page.getByRole("button", { name: "Insert formula" }).click();
   const latex = String.raw`R_1=\frac{1}{g_m}`;
   await page.getByRole("textbox", { name: "Formula LaTeX source" }).fill(latex);
@@ -1628,6 +1631,7 @@ test("the Library Circle creates a selectable shape with one radial handle and n
   page,
 }) => {
   await page.goto("/editor");
+  await revealPropertiesShelf(page);
   await awaitEditorReady(page);
   await clickDrawTool(page, "circle");
   await clickCreate(page, { x: 260, y: 260 }, { x: 340, y: 260 });
@@ -1818,6 +1822,7 @@ test("drawing Properties follows selection and closes with the dock", async ({
   await hit.click({ force: true });
   await expect(page.getByTestId("drafting-properties")).toBeVisible();
   await page.keyboard.press("q");
+  await revealPropertiesShelf(page);
   await expect(page.getByTestId("selection-shelf")).toHaveAttribute(
     "aria-expanded",
     "false",
@@ -2385,6 +2390,7 @@ test("places a mixed fraction in a device visual annotation without changing its
     .click({ position: { x: 450, y: 340 } });
   await page.keyboard.press("Escape");
   await page.getByTestId("annotation-hit-instance-label-R1").dblclick();
+  await page.getByRole("checkbox", { name: "Use display alias" }).check();
   const editor = page.getByRole("textbox", {
     name: "Canvas text editor",
     exact: true,

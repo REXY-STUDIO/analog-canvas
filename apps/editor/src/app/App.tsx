@@ -3,6 +3,10 @@ import { NetlistCodePanel } from "../features/netlist-export/netlist-code-panel"
 import { NetlistProfileCode } from "../features/netlist-export/netlist-profile-code";
 import { useNetlistExportPreferences } from "../features/netlist-export/netlist-export-preferences";
 import {
+  planNetlistProcess,
+  prepareNetlistExample,
+} from "../features/netlist-export/netlist-process";
+import {
   DEFAULT_ARROW_PRESET,
   type ArrowPreset,
 } from "../features/drafting/arrow-presets";
@@ -722,7 +726,16 @@ export function App({
   const canvasContextMenuSuppressed = useRef(false);
   const [netlistPreflightOpen, setNetlistPreflightOpen] = useState(false);
   const [projectPanel, setProjectPanel] =
-    useState<EditorProjectPanelMode | null>(null);
+    useState<EditorProjectPanelMode | null>("netlist");
+  const [netlistFocusedInstance, setNetlistFocusedInstance] = useState<{
+    documentId: string;
+    instanceId: string;
+  } | null>(null);
+  useEffect(() => {
+    // Explicit inspector actions (Q, double-click, Issues, import review)
+    // take precedence over the Netlist panel opened at startup.
+    if (selectionOpen) setProjectPanel(null);
+  }, [selectionOpen]);
   const propertiesOpenBeforeProjectPanelRef = useRef(false);
   const [netlistNamingProfile, setNetlistNamingProfile] = useState<
     "native" | "cadence-bang"
@@ -917,6 +930,7 @@ export function App({
   );
   const openAnalogSimulation = (): void => {
     if (!publicSimulationUiEnabled) return;
+    setProjectPanel(null);
     setAnalogSimulationState("open");
   };
   const minimizeAnalogSimulation = (): void => {
@@ -1212,6 +1226,11 @@ export function App({
   const { openGalleryEntryById, openLibraryExample, insertGalleryEntryById } =
     createGalleryExampleCommands({
       defaultViewBox: DEFAULT_VIEWBOX,
+      prepareLibraryExample: (example) =>
+        prepareNetlistExample(
+          example,
+          netlistPreferences.preferences.profiles[netlistPreferences.selected],
+        ),
       replaceActiveProject,
       guardDirtyReplacement,
       beginCopyPlacement: (clipboard, anchor) => {
@@ -2049,7 +2068,7 @@ export function App({
     },
   });
   const {
-    restoreTextReference,
+    setTextDisplayAlias,
     applyRouteProperties,
     beginAnnotationTextEditing,
     beginDraftingTextEditing,
@@ -3350,7 +3369,15 @@ export function App({
         (candidate) => candidate.id === exampleId,
       );
       if (exampleProject && example) {
-        replaceActiveProject(exampleProject, DEFAULT_VIEWBOX);
+        replaceActiveProject(
+          prepareNetlistExample(
+            exampleProject,
+            netlistPreferences.preferences.profiles[
+              netlistPreferences.selected
+            ],
+          ),
+          DEFAULT_VIEWBOX,
+        );
         setStatus(`Opened example: ${example.name}`);
       }
     }
@@ -5431,16 +5458,48 @@ export function App({
                   <NetlistProfileCode
                     text={netlistPreferences.text}
                     error={netlistPreferences.error}
-                    onChange={netlistPreferences.changeText}
+                    onChange={(text) =>
+                      netlistPreferences.changeText(text, (next) => {
+                        const previous = netlistPreferences.preferences;
+                        if (
+                          next.selected === previous.selected &&
+                          JSON.stringify(next.profiles[next.selected]) ===
+                            JSON.stringify(previous.profiles[previous.selected])
+                        )
+                          return;
+                        const edits = planNetlistProcess(
+                          project,
+                          next.profiles[next.selected],
+                        );
+                        if (
+                          edits.length &&
+                          !commitStructure("edit-netlist-process", edits)
+                        )
+                          throw new Error("Could not apply device mappings");
+                      })
+                    }
                   />
                 ) : projectPanel === "netlist" ? (
                   <NetlistCodePanel
+                    key={projectSessionId}
+                    onApply={(edits) =>
+                      commitStructure("edit-netlist-code", edits)
+                    }
+                    onFocusInstance={(instance) => {
+                      if (instance && instance.documentId !== document.id)
+                        selectDocumentFromHierarchy(instance.documentId);
+                      setNetlistFocusedInstance(instance);
+                    }}
                     project={project}
                     format={netlistPreferences.format}
                     namingProfile={netlistNamingProfile}
                     portCase={netlistPreferences.portCase}
                     onFormatChange={netlistPreferences.selectFormat}
                     onPortCaseChange={netlistPreferences.selectPortCase}
+                    profiles={netlistPreferences.preferences.profiles}
+                    selectedProcess={netlistPreferences.selected}
+                    onProcessChange={netlistPreferences.selectProfile}
+                    onDeviceTargetChange={netlistPreferences.setDeviceTarget}
                     onReset={netlistPreferences.reset}
                     onCopy={() =>
                       exportDesignNetlist(
@@ -6371,7 +6430,16 @@ export function App({
             document,
             resolver,
             styleProfile,
-            selectedInstanceIds: selectedIds,
+            selectedInstanceIds:
+              netlistFocusedInstance?.documentId === document.id &&
+              projectPanel === "netlist"
+                ? [
+                    ...new Set([
+                      ...selectedIds,
+                      netlistFocusedInstance.instanceId,
+                    ]),
+                  ]
+                : selectedIds,
             wouldMoveIds,
           }}
           cellSymbolLayout={
@@ -6791,7 +6859,7 @@ export function App({
               setStatus("Cancelled text changes");
             },
             onTextDelete: deleteTextEditing,
-            onRestoreReference: restoreTextReference,
+            onDisplayAliasChange: setTextDisplayAlias,
           }}
         />
         {canvasContextMenu ? (

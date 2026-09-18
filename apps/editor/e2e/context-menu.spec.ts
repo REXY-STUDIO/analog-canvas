@@ -767,7 +767,12 @@ test("Netlist keeps format selection in the project panel while File keeps drawi
       exact: true,
     }),
   ).toHaveCount(0);
-  await page.getByTestId("netlist-panel-toggle").click();
+  if (
+    (await page
+      .getByTestId("netlist-panel-toggle")
+      .getAttribute("aria-pressed")) !== "true"
+  )
+    await page.getByTestId("netlist-panel-toggle").click();
   const projectPanel = page.getByRole("region", {
     name: "Live netlist",
     exact: true,
@@ -780,7 +785,15 @@ test("Netlist keeps format selection in the project panel while File keeps drawi
       .evaluateAll((selects) =>
         selects.map((select) => select.getAttribute("aria-label")),
       ),
-  ).toEqual(["Netlist format"]);
+  ).toEqual([
+    "Netlist format",
+    "Netlist process",
+    "NMOS netlist target",
+    "PMOS netlist target",
+    "R netlist target",
+    "C netlist target",
+    "L netlist target",
+  ]);
   await expect(
     page
       .getByRole("complementary", { name: "Project tools", exact: true })

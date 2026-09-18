@@ -276,11 +276,16 @@ device parameters or renumbers an Instance before extraction. An authored
 external-subcircuit remains an `X` call everywhere and an authored primitive MOS
 remains an `M` card everywhere.
 
-The Netlist configuration contains only `format` and `portCase`. These browser
-preferences select printer syntax and formal-interface letter case; they are
-not electrical authority. A process-mapping workflow must be an explicit,
-undoable Project edit that writes ordinary typed bindings and parameters before
-any consumer extracts the circuit. Simulation Profiles select engines,
+Netlist configuration stores `format`, `portCase`, the selected process and
+editable device templates for Abstract, SKY130, TSMC 28, TSMC 180 and Custom.
+Format and case are output preferences. Process/device selection is an
+undoable Project transaction that writes ordinary typed bindings and parameters
+before any consumer extracts the circuit. Creating a bundled example applies
+missing native-device defaults from the cached template while retaining
+explicit models and external interfaces. Opening or reopening a saved Project's
+panel does not edit it, refill deliberately missing parameters, or interfere
+with recovery. Templates are
+cached in the browser; applied bindings travel with the Project. Simulation Profiles select engines,
 dependencies and corners and validate persisted targets; they do not rewrite
 them.
 
@@ -381,10 +386,40 @@ and the explicit substrate rule belong only to the selected preset above.
 
 The editor's primary Netlist button copies immediately in its current format
 (SPICE by default) and opens the live right sidebar. That panel's Format select
-chooses the format, which is remembered with the browser-local configuration.
+chooses the format independently of the adjacent Process selector. The compact
+NMOS/PMOS/R/C/L selectors apply their target to that device family. Ideal R/C/L
+remain the default; selecting a reviewed physical passive uses its geometry,
+not a numerical conversion of an ideal resistance/capacitance/inductance.
+Authored W/L and values survive process changes, and reviewed SKY130 calls use
+the existing canonical unit/interface conversion. TSMC 28 maps `m` to `multi`;
+switching back restores `m`. Reference collisions allocate a free designator
+without changing stable instance IDs. Custom external blocks keep their own
+interfaces. Default restores Abstract mapping and output preferences without
+overwriting authored parameter values. These choices are remembered locally.
 The adjacent menu offers Configuration…, Instances…, Check Report…, and Check
 and Save; it has no format choice. Clipboard rejection leaves selectable code
 and a status message, without a download fallback.
+
+The right Netlist editor is open by default. Its SPICE and SCS source allows
+editing device References, model targets and existing printed parameter values.
+A valid edit applies after a short typing pause or Enter (Shift+Enter inserts a
+line break). The printer supplies stable Document/Instance locations, including
+SPICE continuation lines; the caret highlights the corresponding canvas Instance
+and opens its Cell when necessary. It does not infer identity from Reference
+spelling, which may repeat across Cells.
+Explicit inspector actions (Q, double-clicking a component, Issues and import
+review) replace the default netlist panel. Canvas editing never requires closing
+the netlist first.
+
+Source edits use one atomic Project transaction with per-Document revisions.
+Renaming preserves layout, wiring and IDs, updates bound labels, and leaves
+explicit display aliases unchanged. Duplicate names, invalid prefixes, malformed
+values and unsupported structure changes retain the draft with an error and
+leave the circuit unchanged. Connections, ports and device structure are edited
+on the canvas or in Project Code. Dirty source is never silently overwritten by
+canvas or Agent changes: conflicting live netlist changes require Reload. Copy
+in this panel is disabled until the draft is applied or discarded. The printed
+source and the circuit share undo/redo through those same transactions.
 
 The copy/export projection removes the strict printer's generated title and
 adds no diagnostic, preset, TODO-summary or library comments. It also accepts

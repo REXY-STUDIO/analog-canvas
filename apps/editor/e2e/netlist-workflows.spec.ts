@@ -102,7 +102,12 @@ test("previews a validated structural netlist in both export dialects", async ({
   page,
 }) => {
   await page.goto("/editor");
-  await page.getByTestId("netlist-panel-toggle").click();
+  if (
+    (await page
+      .getByTestId("netlist-panel-toggle")
+      .getAttribute("aria-pressed")) !== "true"
+  )
+    await page.getByTestId("netlist-panel-toggle").click();
   const netlistPanel = page.getByRole("region", {
     name: "Live netlist",
     exact: true,
@@ -402,6 +407,7 @@ test("copies structural SPICE and Spectre netlists while exposing instance autho
   );
 
   await placeComponent(page, "nmos", { x: 360, y: 220 });
+  await page.getByTestId("netlist-panel-toggle").click();
   await expect(
     page.getByRole("textbox", { name: "Netlist code", exact: true }),
   ).toHaveText("");
@@ -509,8 +515,8 @@ test("shows and copies a live MOS netlist with explicitly connected bulk termina
   const codeViewport = panel.locator(".netlist-code-viewport");
   await expect(codeViewport).toHaveAttribute("data-visible-lines", "10");
   await expect(codeViewport.locator(".cm-lineNumbers")).toBeVisible();
-  await expect(panel.getByLabel("Netlist process")).toHaveCount(0);
-  await expect(panel.getByText("netlist target")).toHaveCount(0);
+  await expect(panel.getByLabel("Netlist process")).toBeVisible();
+  await expect(panel.getByLabel("NMOS netlist target")).toBeVisible();
   const portCase = panel.getByRole("button", {
     name: "Port names: uppercase",
   });
@@ -532,7 +538,12 @@ test("shows and copies a live MOS netlist with explicitly connected bulk termina
     optionsBarBox!.y - (codeViewportBox!.y + codeViewportBox!.height),
   ).toBeLessThanOrEqual(12);
   await page.reload();
-  await page.getByTestId("netlist-panel-toggle").click();
+  if (
+    (await page
+      .getByTestId("netlist-panel-toggle")
+      .getAttribute("aria-pressed")) !== "true"
+  )
+    await page.getByTestId("netlist-panel-toggle").click();
   await expect(
     panel.getByRole("button", { name: "Port names: lowercase" }),
   ).toBeVisible();
@@ -544,9 +555,14 @@ test("shows and copies a live MOS netlist with explicitly connected bulk termina
   ).toBeVisible();
   await expect(panel.getByLabel("Netlist code")).toContainText(".subckt dut\n");
   await page.reload();
-  await page.getByTestId("netlist-panel-toggle").click();
+  if (
+    (await page
+      .getByTestId("netlist-panel-toggle")
+      .getAttribute("aria-pressed")) !== "true"
+  )
+    await page.getByTestId("netlist-panel-toggle").click();
   await expect(panel.getByLabel("Netlist format")).toHaveValue("spice");
-  await expect(panel.getByLabel("Netlist process")).toHaveCount(0);
+  await expect(panel.getByLabel("Netlist process")).toBeVisible();
 });
 
 test("caps a long live netlist at twenty visible lines with internal scrolling", async ({
@@ -576,7 +592,12 @@ test("caps a long live netlist at twenty visible lines with internal scrolling",
     mimeType: "application/json",
     buffer: Buffer.from(JSON.stringify(project)),
   });
-  await page.getByTestId("netlist-panel-toggle").click();
+  if (
+    (await page
+      .getByTestId("netlist-panel-toggle")
+      .getAttribute("aria-pressed")) !== "true"
+  )
+    await page.getByTestId("netlist-panel-toggle").click();
   const panel = page.getByRole("region", { name: "Live netlist", exact: true });
   const viewport = panel.locator(".netlist-code-viewport");
   await expect(viewport).toHaveAttribute("data-visible-lines", "20");
@@ -612,12 +633,21 @@ test("edits output configuration without creating another electrical authority",
   await expect(panel.getByRole("combobox")).toHaveCount(0);
   await expect(panel.getByRole("button")).toHaveCount(0);
   const config = JSON.parse(await code.inputValue());
-  expect(config).toEqual({ format: "spice", portCase: "upper" });
+  expect(config).toMatchObject({
+    format: "spice",
+    portCase: "upper",
+    selected: "abstract",
+  });
   config.format = "spectre";
   config.portCase = "lower";
   await code.fill(JSON.stringify(config, null, 2));
   await page.reload();
-  await page.getByTestId("netlist-panel-toggle").click();
+  if (
+    (await page
+      .getByTestId("netlist-panel-toggle")
+      .getAttribute("aria-pressed")) !== "true"
+  )
+    await page.getByTestId("netlist-panel-toggle").click();
   await expect(
     page.getByRole("combobox", { name: "Netlist format" }),
   ).toHaveValue("spectre");
@@ -637,7 +667,7 @@ test("edits output configuration without creating another electrical authority",
   expect(netlist).toContain("simulator lang=spectre");
 });
 
-test("copies an incomplete netlist in one click and previews its TODO fields", async ({
+test("retains copyable TODO fields when the user clears a template default", async ({
   page,
 }) => {
   const project = createEmptyProject("draft-project", "Draft Circuit");
@@ -659,6 +689,12 @@ test("copies an incomplete netlist in one click and previews its TODO fields", a
     })),
   );
   await page.goto("/editor");
+  await clickCommand(page, "Netlist", "Configuration…");
+  const configuration = page.getByLabel("Netlist configuration JSON");
+  const preferences = JSON.parse(await configuration.inputValue());
+  preferences.profiles.abstract.devices.resistor.parameters = {};
+  await configuration.fill(JSON.stringify(preferences));
+  await page.getByTestId("netlist-panel-toggle").click();
   await page.getByTestId("project-file").setInputFiles({
     name: "draft.icproj.json",
     mimeType: "application/json",
@@ -727,6 +763,10 @@ test("keeps the netlist live and selectable when clipboard access fails", async 
     mimeType: "text/plain",
     buffer: Buffer.from("\n.subckt live a b\nR1 a b 2k\n.ends live\n"),
   });
+  await expect(
+    page.getByRole("region", { name: "Import Review", exact: true }),
+  ).toBeVisible();
+  await page.getByTestId("netlist-panel-toggle").click();
   await expect(code).toContainText(/R1 a b 2k/iu);
   await expect(code).not.toContainText(".subckt dut");
   await page.setViewportSize({ width: 760, height: 800 });
