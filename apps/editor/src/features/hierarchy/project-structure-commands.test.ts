@@ -3,7 +3,11 @@ import { createEmptyDocument, createEmptyProject } from "@icm/model";
 import { builtInSymbols, createProjectSymbolResolver } from "@icm/symbols";
 import { describe, expect, it, vi } from "vitest";
 
-import { createProjectStructureCommands } from "./project-structure-commands";
+import {
+  createProjectStructureCommands,
+  applyConfirmedCellInterfaceEdit,
+} from "./project-structure-commands";
+import type { CellInterfaceConfirmation } from "./project-structure-commands";
 import { localBlockSymbolTarget } from "./block-symbol-layout-target";
 
 function dependencies() {
@@ -28,6 +32,126 @@ function dependencies() {
 }
 
 describe("Project structure commands", () => {
+  it("never applies a confirmation against a replaced Project snapshot", () => {
+    const project = createEmptyProject("project", "Project");
+    const request = {
+      title: "Delete",
+      message: "Delete Port",
+      confirmLabel: "Delete",
+      apply: vi.fn(() => true),
+    };
+    expect(() =>
+      applyConfirmedCellInterfaceEdit(
+        request,
+        project,
+        structuredClone(project),
+      ),
+    ).toThrow("Project changed");
+    expect(request.apply).not.toHaveBeenCalled();
+    expect(applyConfirmedCellInterfaceEdit(request, project, project)).toBe(
+      true,
+    );
+    expect(request.apply).toHaveBeenCalledTimes(1);
+  });
+  it("deletes only unused external definitions and preserves failure feedback", () => {
+    const input = dependencies();
+    input.project.externalSubcircuitDefinitions.push({
+      id: "ext",
+      name: "Amp",
+      terminals: [],
+      formalParameters: [],
+      interfaceStatus: "declared",
+    });
+    const commands = createProjectStructureCommands(input);
+    input.activeDocument.instances.push({
+      id: "X1",
+      symbolId: "block",
+      placement: null,
+      netlist: {
+        parameters: {},
+        binding: { kind: "external-subcircuit", definitionId: "ext" },
+      },
+    });
+    expect(commands.removeExternalSubcircuitDefinition("ext")).toMatchObject({
+      ok: false,
+      message: expect.stringContaining("X1"),
+    });
+    expect(input.commitStructure).not.toHaveBeenCalled();
+    input.activeDocument.instances = [];
+    expect(commands.removeExternalSubcircuitDefinition("ext").ok).toBe(true);
+    expect(input.commitStructure).toHaveBeenCalledWith(
+      "remove-external-subcircuit-definition",
+      [{ kind: "remove_external_subcircuit_definition", definitionId: "ext" }],
+    );
+    input.commitStructure.mockReturnValue(false);
+    expect(commands.removeExternalSubcircuitDefinition("ext").ok).toBe(false);
+    expect(commands.removeExternalSubcircuitDefinition("missing").ok).toBe(
+      false,
+    );
+  });
+
+  it("defers connected deletion and electrical merging until internal confirmation", () => {
+    const input = dependencies();
+    const child = input.activeDocument;
+    for (const name of ["A", "B"]) {
+      child.instances.push({
+        id: `P${name}`,
+        symbolId: "port",
+        placement: null,
+      });
+      child.nets.push({
+        id: `net-${name}`,
+        terminals: [{ instanceId: `P${name}`, pinName: "P" }],
+      });
+      child.netlist!.terminals.push({
+        id: name,
+        name,
+        netId: `net-${name}`,
+        direction: "passive",
+        interfaceInstanceIds: [`P${name}`],
+      });
+    }
+    const parent = createEmptyDocument("parent", "Parent");
+    parent.instances.push({
+      id: "X1",
+      symbolId: "hierarchical-main",
+      placement: null,
+      netlist: {
+        parameters: {},
+        binding: { kind: "subcircuit", childDocumentId: child.id },
+      },
+    });
+    parent.nets.push(
+      { id: "a", terminals: [{ instanceId: "X1", pinName: "A" }] },
+      { id: "b", terminals: [{ instanceId: "X1", pinName: "B" }] },
+    );
+    input.project.documents.push(parent);
+    const requestConfirmation =
+      vi.fn<(request: CellInterfaceConfirmation) => void>();
+    const commands = createProjectStructureCommands({
+      ...input,
+      requestConfirmation,
+    });
+    commands.renameCellTerminal("A", "B");
+    expect(input.commitStructure).not.toHaveBeenCalled();
+    const merge = requestConfirmation.mock.calls[0]![0];
+    expect(merge.title).toBe("Merge Cell Ports?");
+    merge.apply();
+    expect(JSON.stringify(input.commitStructure.mock.calls[0])).toContain(
+      "merge_nets",
+    );
+    input.commitStructure.mockClear();
+    commands.removeCellTerminalSelection(["A"], []);
+    expect(input.commitStructure).not.toHaveBeenCalled();
+    const deletion = requestConfirmation.mock.calls[1]![0];
+    expect(deletion.message).toContain("Parent/X1");
+    deletion.apply();
+    expect(input.commitStructure).toHaveBeenCalledWith(
+      "delete-cell-pin-selection",
+      expect.any(Array),
+    );
+  });
+
   it("returns actionable external definition validation and commit results", () => {
     const input = dependencies();
     const commands = createProjectStructureCommands(input);
@@ -128,22 +252,23 @@ describe("Project structure commands", () => {
     expect(input.setStatus).toHaveBeenCalledWith("Deleted Cell Child");
   });
 
-  it("normalizes formal parameters before committing their structural edit", () => {
+  it("normalizes a parameter default and rejects clearing it without committing", () => {
     const input = dependencies();
     const child = createEmptyDocument("document-child", "Child");
     input.project.documents.push(child);
+    child.netlist!.formalParameters = [{ name: "gain", defaultValue: "1" }];
     const commands = createProjectStructureCommands(input);
 
-    commands.setCellFormalParameters(
-      [
-        { name: "  gain  ", defaultValue: "  10  " },
-        { name: "bias", defaultValue: "   " },
-      ],
-      child.id,
-    );
+    expect(
+      commands.editCellParameter(
+        "gain",
+        { kind: "default", value: " 10 " },
+        child.id,
+      ).ok,
+    ).toBe(true);
 
     expect(input.commitStructure).toHaveBeenCalledWith(
-      "set-cell-formal-parameters",
+      "cell-parameter-default",
       expect.arrayContaining([
         {
           kind: "transact_document",
@@ -152,15 +277,21 @@ describe("Project structure commands", () => {
           edits: [
             {
               kind: "set_cell_formal_parameters",
-              formalParameters: [
-                { name: "gain", defaultValue: "10" },
-                { name: "bias" },
-              ],
+              formalParameters: [{ name: "gain", defaultValue: "10" }],
             },
           ],
         },
       ]),
     );
+    input.commitStructure.mockClear();
+    expect(
+      commands.editCellParameter(
+        "gain",
+        { kind: "default", value: "" },
+        child.id,
+      ).ok,
+    ).toBe(false);
+    expect(input.commitStructure).not.toHaveBeenCalled();
   });
 
   it("rejects off-grid Cell symbol dimensions before planning", () => {

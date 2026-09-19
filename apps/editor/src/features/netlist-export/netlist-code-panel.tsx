@@ -47,6 +47,8 @@ const ProjectTextEditor = lazy(
 /** Live structural output. Diagnostics belong outside the copyable code. */
 export function NetlistCodePanel({
   project,
+  rootDocumentId,
+  onRootChange,
   format,
   namingProfile,
   portCase,
@@ -63,6 +65,8 @@ export function NetlistCodePanel({
   onDeviceTargetChange,
 }: {
   project: CircuitProject;
+  rootDocumentId?: string | undefined;
+  onRootChange?(documentId: string): void;
   format: NetlistFormat;
   namingProfile: NetlistNamingProfile;
   portCase: NetlistPortCase;
@@ -128,8 +132,16 @@ export function NetlistCodePanel({
             namingProfile,
             portCase,
             includeLocations: true,
+            ...(rootDocumentId ? { rootDocumentId } : {}),
           }),
-    [project, format, namingProfile, portCase, configurationError],
+    [
+      project,
+      format,
+      namingProfile,
+      portCase,
+      configurationError,
+      rootDocumentId,
+    ],
   );
   const unfinished = result
     ? unfinishedDrawingDiagnostics(result.diagnostics)
@@ -211,6 +223,24 @@ export function NetlistCodePanel({
       aria-label="Live netlist"
     >
       <div className="netlist-code-controls">
+        {onRootChange && project.documents.length > 1 ? (
+          <label>
+            <span>Entry</span>
+            <select
+              aria-label="Netlist entry Cell"
+              value={rootDocumentId ?? ""}
+              disabled={dirty}
+              onChange={(event) => onRootChange(event.currentTarget.value)}
+            >
+              <option value="">Default Top</option>
+              {project.documents.map((cell) => (
+                <option key={cell.id} value={cell.id}>
+                  {cell.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <label>
           <span>Format</span>
           <select

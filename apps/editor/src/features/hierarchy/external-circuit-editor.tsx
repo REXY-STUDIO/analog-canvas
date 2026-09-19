@@ -1,24 +1,35 @@
 import { useEffect, useState } from "react";
 import type { ExternalSubcircuitDefinition } from "@icm/model";
 import { createId } from "@icm/model";
+import { resolveReviewedExternalBinding } from "@icm/devices";
 import type { ExternalDefinitionResult } from "./project-structure-commands";
 
 /** Project-level external declaration; there is no local schematic body. */
 export function ExternalCircuitEditor({
   definition,
   onSetExternalDefinition,
+  onRemoveExternalDefinition,
 }: {
   definition: ExternalSubcircuitDefinition | undefined;
   onSetExternalDefinition(
     definition: ExternalSubcircuitDefinition,
   ): ExternalDefinitionResult;
+  onRemoveExternalDefinition(definitionId: string): ExternalDefinitionResult;
 }) {
   const [result, setResult] = useState<ExternalDefinitionResult | null>(null);
   const [externalName, setExternalName] = useState("");
   const [externalTerminals, setExternalTerminals] = useState("");
   const [externalParameters, setExternalParameters] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const reviewed =
+    definition &&
+    resolveReviewedExternalBinding(
+      definition.name,
+      definition.terminals.map((item) => item.name),
+    );
 
   useEffect(() => {
+    setConfirmDelete(false);
     if (!definition) {
       setExternalName("");
       setExternalTerminals("");
@@ -43,9 +54,9 @@ export function ExternalCircuitEditor({
   return (
     <section aria-label="External circuit interface">
       <p className="cell-interface-empty">
-        Interface for an external model, not a local schematic. Terminals must
-        match the model’s port order. Simulation also requires the external
-        model implementation in its source files.
+        {reviewed
+          ? `${reviewed.libraryId} · fixed PDK interface. Set parameters on instances.`
+          : "Interface only · supply the model in Simulation sources. Terminal order must match the model."}
       </p>
       <div className="cell-external-grid">
         <label>
@@ -54,6 +65,7 @@ export function ExternalCircuitEditor({
             aria-label="External subcircuit target"
             placeholder="amplifier"
             value={externalName}
+            readOnly={Boolean(reviewed)}
             onChange={(event) => setExternalName(event.currentTarget.value)}
           />
         </label>
@@ -63,6 +75,7 @@ export function ExternalCircuitEditor({
             aria-label="External subcircuit terminals"
             placeholder="INP, INN, OUT"
             value={externalTerminals}
+            readOnly={Boolean(reviewed)}
             onChange={(event) =>
               setExternalTerminals(event.currentTarget.value)
             }
@@ -74,6 +87,7 @@ export function ExternalCircuitEditor({
             aria-label="External subcircuit formal parameters"
             placeholder="gain=10, bias"
             value={externalParameters}
+            readOnly={Boolean(reviewed)}
             onChange={(event) =>
               setExternalParameters(event.currentTarget.value)
             }
@@ -81,6 +95,7 @@ export function ExternalCircuitEditor({
         </label>
         <button
           type="button"
+          disabled={Boolean(reviewed)}
           onClick={() => {
             const target = externalName.trim();
             if (!target) {
@@ -128,9 +143,34 @@ export function ExternalCircuitEditor({
             );
           }}
         >
-          {definition ? "Save definition" : "Create External Circuit"}
+          {definition ? "Save definition" : "Create External Circuit Def"}
         </button>
       </div>
+      {definition ? (
+        <div className="cell-manager-actions">
+          {confirmDelete ? (
+            <>
+              <span>Delete {definition.name}?</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setResult(onRemoveExternalDefinition(definition.id));
+                  setConfirmDelete(false);
+                }}
+              >
+                Confirm delete
+              </button>
+              <button type="button" onClick={() => setConfirmDelete(false)}>
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button type="button" onClick={() => setConfirmDelete(true)}>
+              Delete definition
+            </button>
+          )}
+        </div>
+      ) : null}
       {result ? (
         <p role={result.ok ? "status" : "alert"}>{result.message}</p>
       ) : null}

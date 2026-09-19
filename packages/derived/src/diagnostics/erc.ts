@@ -14,6 +14,7 @@ import { resolveDocumentRoutingGeometry } from "../resolved-route-geometry.js";
 import { findRouteSegmentsAtPoint } from "../route-query.js";
 import { directObjectLocator, type ObjectLocator } from "../object-locator.js";
 import type { Diagnostic, DiagnosticSeverity } from "./diagnostic.js";
+import { findExternalMasterCollisions } from "../master-names.js";
 
 /**
  * Electrical checks share endpoint assessment and the Diagnostic envelope.
@@ -46,7 +47,64 @@ export function runErcChecks(
     a.id.localeCompare(b.id, "en"),
   );
 
+  for (const collision of findExternalMasterCollisions(project, documents)) {
+    diagnostics.push({
+      id: `erc:master-name-collision:${collision.documentId}:${collision.instanceId}`,
+      domain: "erc",
+      code: "ERC_MASTER_NAME_COLLISION",
+      severity: "error",
+      confidence: "high",
+      gateEligible: true,
+      message: `External master ${collision.masterName} conflicts with local Cell ${collision.localName}; choose distinct exported master names`,
+      primary: directObjectLocator(
+        collision.documentId,
+        "instance",
+        collision.instanceId,
+      ),
+      related: [
+        directObjectLocator(
+          collision.localDocumentId,
+          "document",
+          collision.localDocumentId,
+        ),
+      ],
+      parameters: { masterName: collision.masterName },
+    });
+  }
+
   for (const document of documents) {
+    for (const issue of projectCellInterface(document.netlist).issues) {
+      const locations = issue.terminalIds.map((terminalId) => {
+        const terminal = document.netlist!.terminals.find(
+          (item) => item.id === terminalId,
+        )!;
+        return terminal.interfaceInstanceIds.length
+          ? directObjectLocator(
+              document.id,
+              "instance",
+              terminal.interfaceInstanceIds[0]!,
+            )
+          : terminal.interfaceAnnotationId
+            ? directObjectLocator(
+                document.id,
+                "annotation",
+                terminal.interfaceAnnotationId,
+              )
+            : directObjectLocator(document.id, "net", terminal.netId);
+      });
+      diagnostics.push({
+        id: `erc:cell-port-direction-conflict:${document.id}:${issue.portKey}`,
+        domain: "erc",
+        code: `ERC_${issue.code}`,
+        severity: "error",
+        confidence: "high",
+        gateEligible: true,
+        message: `Port ${issue.portName} has conflicting directions: ${issue.directions.join(", ")}`,
+        primary: locations[0]!,
+        related: locations.slice(1),
+        parameters: { portName: issue.portName },
+      });
+    }
     const docIndex = index.documents.get(document.id);
     const endpointConnectivity = createEndpointConnectivityClassifier(
       document,

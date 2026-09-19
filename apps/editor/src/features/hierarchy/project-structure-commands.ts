@@ -11,7 +11,9 @@ import {
   planSetCellSymbolPresentation,
   planUpdateCellTerminalDirection,
   planUpdateCellPortDirection,
-  proposeSetCellFormalParameters,
+  planRenameCellParameter,
+  planSetCellParameterDefault,
+  planRemoveCellParameter,
   proposeUpsertExternalSubcircuitDefinition,
 } from "@icm/edit-engine";
 import type { ProjectStructureEdit, SchematicEdit } from "@icm/edit-engine";
@@ -20,6 +22,8 @@ import {
   createId,
   CircuitProjectSchema,
   semanticTextDocument,
+  foldNetName,
+  projectCellInterface,
 } from "@icm/model";
 import type {
   Annotation,
@@ -32,9 +36,10 @@ import type { BlockSymbolLayoutTarget } from "./block-symbol-layout-target";
 
 type CellDirection = "input" | "output" | "inout" | "passive";
 type CellPinSide = "north" | "east" | "south" | "west" | "auto";
-type FormalParameters = NonNullable<
-  SchematicDocument["netlist"]
->["formalParameters"];
+export type CellParameterChange =
+  | { kind: "rename"; value: string }
+  | { kind: "default"; value: string }
+  | { kind: "remove" };
 
 export interface ExternalDefinitionResult {
   ok: boolean;
@@ -42,6 +47,7 @@ export interface ExternalDefinitionResult {
 }
 
 export interface ProjectStructureCommandDependencies {
+  requestConfirmation?: (request: CellInterfaceConfirmation) => void;
   project: CircuitProject;
   activeDocument: SchematicDocument;
   resolver: SymbolResolver;
@@ -54,6 +60,26 @@ export interface ProjectStructureCommandDependencies {
   onCellCreated: () => void;
   nextSequence: () => number;
   createDocumentId?: () => string;
+}
+
+export interface CellInterfaceConfirmation {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  apply(): boolean;
+}
+
+/** Confirmation authorizes precisely the immutable Project the user reviewed. */
+export function applyConfirmedCellInterfaceEdit(
+  request: CellInterfaceConfirmation,
+  snapshot: CircuitProject,
+  current: CircuitProject,
+): boolean {
+  if (current !== snapshot)
+    throw new Error(
+      "Project changed. Repeat the operation to review its current impact.",
+    );
+  return request.apply();
 }
 
 /**
@@ -71,7 +97,79 @@ export function createProjectStructureCommands({
   onCellCreated,
   nextSequence,
   createDocumentId = () => createId("document"),
+  requestConfirmation,
 }: ProjectStructureCommandDependencies) {
+  const confirm = (request: CellInterfaceConfirmation): boolean => {
+    if (!requestConfirmation) {
+      setStatus(request.message);
+      return false;
+    }
+    requestConfirmation(request);
+    return true;
+  };
+  const isMerge = (
+    document: SchematicDocument,
+    terminalId: string,
+    name: string,
+  ) => {
+    const terminal = document.netlist?.terminals.find(
+      (item) => item.id === terminalId,
+    );
+    return (
+      terminal &&
+      foldNetName(terminal.name) !== foldNetName(name) &&
+      document.netlist!.terminals.some(
+        (item) =>
+          item.id !== terminalId &&
+          foldNetName(item.name) === foldNetName(name),
+      )
+    );
+  };
+  const confirmMerge = (name: string, apply: () => boolean) =>
+    confirm({
+      title: "Merge Cell Ports?",
+      confirmLabel: "Merge Ports",
+      message: `Merge into ${name}. This electrically joins the Ports and their connected parent networks. Undo restores the change.`,
+      apply,
+    });
+  const commitRemoval = (
+    terminalIds: readonly string[],
+    apply: () => boolean,
+  ) => {
+    const removed = new Set(terminalIds);
+    const disappearing = projectCellInterface(
+      activeDocument.netlist,
+    ).ports.filter((port) => port.terminalIds.every((id) => removed.has(id)));
+    const names = new Set(disappearing.map((port) => port.name));
+    const callers = project.documents.flatMap((parent) =>
+      parent.instances
+        .filter((instance) => {
+          const binding = instance.netlist?.binding;
+          return (
+            binding?.kind === "subcircuit" &&
+            binding.childDocumentId === activeDocument.id &&
+            parent.nets.some((net) =>
+              net.terminals.some(
+                (terminal) =>
+                  terminal.instanceId === instance.id &&
+                  names.has(terminal.pinName),
+              ),
+            )
+          );
+        })
+        .map(
+          (instance) => `${parent.name}/${instance.reference ?? instance.id}`,
+        ),
+    );
+    return callers.length
+      ? confirm({
+          title: "Delete connected Cell Ports?",
+          confirmLabel: "Delete Ports",
+          message: `Delete ${disappearing.map((port) => port.name).join(", ")}. Wires remain disconnected in: ${callers.join(", ")}.`,
+          apply,
+        })
+      : apply();
+  };
   const createCell = (inputName: string): void => {
     const name = inputName.trim();
     if (!name) return;
@@ -82,6 +180,19 @@ export function createProjectStructureCommands({
       onCellCreated();
       setStatus(`Created Cell ${name}`);
     }
+  };
+
+  const setTopCell = (documentId: string): boolean => {
+    if (documentId === project.topDocumentId) return true;
+    const target = project.documents.find(
+      (document) => document.id === documentId,
+    );
+    if (!target) return false;
+    const committed = commitStructure("set-top-cell", [
+      { kind: "set_top_document", documentId },
+    ]);
+    if (committed) setStatus(`Default Top: ${target.name}`);
+    return committed;
   };
 
   const renameCell = (documentId: string, inputName: string): void => {
@@ -169,6 +280,21 @@ export function createProjectStructureCommands({
       (candidate) => candidate.id === terminalId,
     );
     if (!terminal || !nextName || terminal.name === nextName) return;
+    if (isMerge(targetDocument!, terminalId, nextName)) {
+      confirmMerge(nextName, () =>
+        commitStructure(
+          transactionId,
+          planRenameCellTerminal(
+            project,
+            targetDocumentId,
+            terminalId,
+            nextName,
+            { mergeExistingPort: true },
+          ),
+        ),
+      );
+      return;
+    }
     try {
       if (
         commitStructure(
@@ -227,6 +353,21 @@ export function createProjectStructureCommands({
           : {}),
       };
       const renamed = terminal.name !== inputName;
+      if (isMerge(activeDocument, terminal.id, inputName)) {
+        return confirmMerge(inputName, () =>
+          commitStructure(
+            "merge-cell-pin-label",
+            planEditCellTerminalAnnotation(
+              project,
+              activeDocument.id,
+              terminal.id,
+              normalizedAnnotation,
+              inputName,
+              { mergeExistingPort: true },
+            ),
+          ),
+        );
+      }
       const edits = planEditCellTerminalAnnotation(
         project,
         activeDocument.id,
@@ -259,11 +400,13 @@ export function createProjectStructureCommands({
     terminalIds: readonly string[],
     documentEdits: readonly SchematicEdit[],
   ): boolean =>
-    commitStructure(
-      "delete-cell-pin-selection",
-      planRemoveCellTerminals(project, activeDocument.id, terminalIds, [
-        ...documentEdits,
-      ]),
+    commitRemoval(terminalIds, () =>
+      commitStructure(
+        "delete-cell-pin-selection",
+        planRemoveCellTerminals(project, activeDocument.id, terminalIds, [
+          ...documentEdits,
+        ]),
+      ),
     );
 
   const deleteCellTerminal = (
@@ -286,7 +429,9 @@ export function createProjectStructureCommands({
           nextSequence(),
         ),
       );
-      const committed = commitStructure("delete-cell-pin", edits);
+      const committed = commitRemoval([terminalId], () =>
+        commitStructure("delete-cell-pin", edits),
+      );
       if (committed) setStatus(`Deleted Cell Pin ${terminal.name}`);
       return committed;
     } catch (error) {
@@ -326,30 +471,43 @@ export function createProjectStructureCommands({
     }
   };
 
-  const setCellFormalParameters = (
-    formalParameters: FormalParameters,
+  const editCellParameter = (
+    name: string,
+    change: CellParameterChange,
     targetDocumentId = activeDocument.id,
-  ): void => {
+  ): ExternalDefinitionResult => {
     try {
-      const proposal = proposeSetCellFormalParameters(
-        project,
-        targetDocumentId,
-        formalParameters.map((parameter) => ({
-          name: parameter.name.trim(),
-          ...(parameter.defaultValue?.trim()
-            ? { defaultValue: parameter.defaultValue.trim() }
-            : {}),
-        })),
-      );
-      if (commitStructure("set-cell-formal-parameters", [...proposal.edits])) {
-        setStatus("Updated Cell formal parameters");
-      }
+      const edits =
+        change.kind === "rename"
+          ? planRenameCellParameter(
+              project,
+              targetDocumentId,
+              name,
+              change.value.trim(),
+            )
+          : change.kind === "default"
+            ? planSetCellParameterDefault(
+                project,
+                targetDocumentId,
+                name,
+                change.value.trim(),
+              )
+            : planRemoveCellParameter(project, targetDocumentId, name);
+      const ok =
+        edits.length === 0 ||
+        commitStructure(`cell-parameter-${change.kind}`, edits);
+      const message = ok
+        ? "Updated Cell parameter"
+        : "Could not update Cell parameter";
+      setStatus(message);
+      return { ok, message };
     } catch (error) {
-      setStatus(
+      const message =
         error instanceof Error
           ? error.message
-          : "Could not update Cell formal parameters",
-      );
+          : "Could not update Cell parameter";
+      setStatus(message);
+      return { ok: false, message };
     }
   };
 
@@ -410,6 +568,45 @@ export function createProjectStructureCommands({
           : "Could not update external subcircuit interface",
       );
     }
+  };
+
+  const removeExternalSubcircuitDefinition = (
+    definitionId: string,
+  ): ExternalDefinitionResult => {
+    const definition = project.externalSubcircuitDefinitions.find(
+      (item) => item.id === definitionId,
+    );
+    const caller = project.documents.flatMap((document) =>
+      document.instances
+        .filter(
+          (instance) =>
+            instance.netlist?.binding?.kind === "external-subcircuit" &&
+            instance.netlist.binding.definitionId === definitionId,
+        )
+        .map(
+          (instance) => `${document.name}.${instance.reference ?? instance.id}`,
+        ),
+    )[0];
+    const message = !definition
+      ? "External definition no longer exists."
+      : caller
+        ? `Still used by ${caller}. Remove its instances first.`
+        : undefined;
+    if (message) {
+      setStatus(message);
+      return { ok: false, message };
+    }
+    const ok = commitStructure("remove-external-subcircuit-definition", [
+      { kind: "remove_external_subcircuit_definition", definitionId },
+    ]);
+    const result = {
+      ok,
+      message: ok
+        ? `Deleted external circuit ${definition!.name}`
+        : "Could not delete external definition. The Project was not changed.",
+    };
+    setStatus(result.message);
+    return result;
   };
 
   const saveBlockSymbolPresentation = (
@@ -510,6 +707,7 @@ export function createProjectStructureCommands({
   };
 
   return {
+    setTopCell,
     createCell,
     renameCell,
     deleteCell,
@@ -521,8 +719,9 @@ export function createProjectStructureCommands({
     deleteCellTerminal,
     moveCellTerminal,
     moveCellPort,
-    setCellFormalParameters,
+    editCellParameter,
     setExternalSubcircuitDefinition,
+    removeExternalSubcircuitDefinition,
     setCellSymbolBodySize,
     setCellSymbolPortPlacement,
     renameProject,

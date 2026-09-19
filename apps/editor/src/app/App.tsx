@@ -27,13 +27,13 @@ import type {
 } from "@icm/agent-adapter";
 import {
   planProjectCellImport,
+  planBindCellParameter,
   planSetDeviceModelTarget,
   planSetVddConnectionMode,
   planInstanceUnplacement,
   planAngledWireRepairs,
   gateRoutingOperationPlan,
   type ProjectStructureEdit,
-  type CellResetPlan,
   type SchematicEdit,
   type WireSource,
 } from "@icm/edit-engine";
@@ -105,6 +105,10 @@ import {
 } from "../document/release-channel";
 import { resolveSimulationTransport } from "../features/simulation/deployment-transport";
 import { createCanvasHitController } from "../canvas/canvas-hit-controller";
+import { CellInterfaceConfirmationDialog } from "../features/hierarchy/cell-interface-confirmation";
+import { CellParameterDialog } from "../features/hierarchy/cell-parameter-dialog";
+import type { CellInterfaceConfirmation } from "../features/hierarchy/project-structure-commands";
+import { applyConfirmedCellInterfaceEdit } from "../features/hierarchy/project-structure-commands";
 import { screenScaleHitRadius } from "../canvas/canvas-hit-resolver";
 import { buildDiagnosticMarkers } from "../canvas/diagnostic-markers";
 import {
@@ -743,6 +747,15 @@ export function App({
     "native" | "cadence-bang"
   >("native");
   const netlistPreferences = useNetlistExportPreferences();
+  const [netlistEntry, setNetlistEntry] = useState<{
+    sessionId: string;
+    documentId: string;
+  } | null>(null);
+  const netlistRootDocumentId =
+    netlistEntry?.sessionId === projectSessionId &&
+    project.documents.some((item) => item.id === netlistEntry.documentId)
+      ? netlistEntry.documentId
+      : undefined;
   const [documentSettingsOpen, setDocumentSettingsOpen] = useState(false);
   const [projectNameDraft, setProjectNameDraft] = useState<string | null>(null);
   const [publishGalleryOpen, setPublishGalleryOpen] = useState(false);
@@ -1193,6 +1206,18 @@ export function App({
   const documentContactEvidence = projectConnectivityIndex.documents.get(
     document.id,
   )?.contactEvidence;
+  const [interfaceConfirmation, setInterfaceConfirmation] = useState<{
+    request: CellInterfaceConfirmation;
+    snapshot: typeof project;
+  } | null>(null);
+  const [parameterBinding, setParameterBinding] = useState<{
+    snapshot: CircuitProject;
+    cell: SchematicDocument;
+    instanceId: string;
+    field: string;
+    value: string;
+    anchor: HTMLElement;
+  } | null>(null);
   const { commitStructure, transact, transactConnectivity } =
     createEditorTransactionCommands({
       project,
@@ -1213,14 +1238,17 @@ export function App({
     deleteCell,
     updateCellPortDirection,
     moveCellPort,
-    setCellFormalParameters,
+    editCellParameter,
     setExternalSubcircuitDefinition,
+    removeExternalSubcircuitDefinition,
     setCellSymbolBodySize,
     setCellSymbolPortPlacement,
     editCellTerminalAnnotation,
     removeCellTerminalSelection,
     renameProject,
   } = createProjectStructureCommands({
+    requestConfirmation: (request) =>
+      setInterfaceConfirmation({ request, snapshot: project }),
     project,
     activeDocument: document,
     resolver,
@@ -1606,6 +1634,15 @@ export function App({
   const selectedAnnotationOwnerInstanceId = selectedAnnotation
     ? annotationOwningInstanceId(selectedAnnotation)
     : undefined;
+  useEffect(() => {
+    if (
+      parameterBinding &&
+      (!selectionOpen ||
+        selectedInstance?.id !== parameterBinding.instanceId ||
+        document.id !== parameterBinding.cell.id)
+    )
+      setParameterBinding(null);
+  }, [selectionOpen, selectedInstance?.id, document.id, parameterBinding]);
   const selectedComponentSourceCode = useMemo(
     () =>
       selectedInstance
@@ -3523,41 +3560,6 @@ export function App({
     setStatus("Rejected Agent file candidate");
   }
 
-  function commitManagedCellReset(
-    plan: CellResetPlan,
-    command: string,
-  ): boolean {
-    const target = project.documents.find(
-      (candidate) => candidate.id === plan.scope.documentId,
-    );
-    if (!target) {
-      setStatus(
-        `Could not reset Cell: ${plan.scope.documentId} no longer exists`,
-      );
-      return false;
-    }
-    if (plan.edits.length === 0) {
-      setStatus(command + " has nothing to change in Cell " + target.name);
-      return false;
-    }
-    const committed = commitStructure(
-      `reset-cell-${plan.intent}`,
-      [
-        {
-          kind: "transact_document",
-          documentId: target.id,
-          expectedRevision: target.revision,
-          edits: [...plan.edits],
-        },
-      ],
-      document.id,
-    );
-    if (!committed) return false;
-    if (target.id === document.id) resetInteractionState();
-    setStatus(`${command} completed in Cell ${target.name} · Undo restores it`);
-    return true;
-  }
-
   function nextRoutingSuffix(): number {
     routeCounter.current =
       Math.max(routeCounter.current, maxRoutingCounter(document)) + 1;
@@ -3940,6 +3942,7 @@ export function App({
       electricalWarningsPresent: () =>
         requestElectricalDiagnostics().length > 0,
       netlistPortCase: netlistPreferences.portCase,
+      netlistRootDocumentId,
       netlistConfigurationError: netlistPreferences.error,
       guardDirtyReplacement,
       replaceActiveProject,
@@ -4021,6 +4024,14 @@ export function App({
         event.target.closest(
           ".simulation-code-workspace, [data-workspace-interaction]",
         )
+      )
+        return;
+      // The interface confirmation owns keys even though this router captures
+      // at window level before the modal's React handlers.
+      if (interfaceConfirmation) return;
+      if (
+        event.target instanceof Element &&
+        event.target.closest(".cell-parameter-popover")
       )
         return;
       // File flyout arrows navigate the focused menu, never pan the canvas.
@@ -4529,6 +4540,79 @@ export function App({
 
   return (
     <main className="app-shell">
+      {parameterBinding &&
+      selectionOpen &&
+      selectedInstance?.id === parameterBinding.instanceId &&
+      document.id === parameterBinding.cell.id ? (
+        <CellParameterDialog
+          anchor={parameterBinding.anchor}
+          cell={parameterBinding.cell}
+          field={parameterBinding.field}
+          value={parameterBinding.value}
+          onCancel={() => setParameterBinding(null)}
+          onApply={(name, defaultValue) => {
+            if (project !== parameterBinding.snapshot)
+              return {
+                ok: false,
+                message:
+                  "Project changed. Close this dialog and select the field again.",
+              };
+            try {
+              const edits = planBindCellParameter(
+                project,
+                parameterBinding.cell.id,
+                parameterBinding.instanceId,
+                parameterBinding.field,
+                name,
+                defaultValue,
+              );
+              const ok = commitStructure("bind-cell-parameter", edits);
+              if (ok) {
+                setParameterBinding(null);
+                setStatus(`Using Cell parameter ${name}`);
+              }
+              return {
+                ok,
+                ...(!ok
+                  ? {
+                      message: "Could not bind the Cell parameter; see status.",
+                    }
+                  : {}),
+              };
+            } catch (error) {
+              return {
+                ok: false,
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : "Could not bind Cell parameter",
+              };
+            }
+          }}
+        />
+      ) : null}
+      {interfaceConfirmation ? (
+        <CellInterfaceConfirmationDialog
+          request={interfaceConfirmation.request}
+          onCancel={() => setInterfaceConfirmation(null)}
+          onConfirm={() => {
+            setInterfaceConfirmation(null);
+            try {
+              applyConfirmedCellInterfaceEdit(
+                interfaceConfirmation.request,
+                interfaceConfirmation.snapshot,
+                project,
+              );
+            } catch (error) {
+              setStatus(
+                error instanceof Error
+                  ? error.message
+                  : "Could not update Cell interface",
+              );
+            }
+          }}
+        />
+      ) : null}
       {renderCrashRequested() ? <RenderCrashProbe /> : null}
       <EditorAppChrome
         {...(publicSimulationUiEnabled
@@ -4791,7 +4875,6 @@ export function App({
           topDocumentId: project.topDocumentId,
           navigationDepth: documentStack.length,
           canEnter: hasHierarchyEnterSelection,
-          onUp: returnToParentDocument,
           onTop: returnToTopDocument,
           onSelectDocument: selectDocumentFromHierarchy,
           onEnter: enterSelectedHierarchy,
@@ -4928,6 +5011,19 @@ export function App({
                 open: cellManagerOpen,
                 cells: cellManagerEntries,
                 project,
+                hierarchyCalls: projectConnectivityIndex.hierarchy.calls,
+                onOpenOccurrence: (documentId, hierarchyPath) => {
+                  navigateToLocator(
+                    {
+                      documentId,
+                      hierarchyPath: [...hierarchyPath],
+                      kind: "document",
+                      objectId: documentId,
+                    },
+                    "Opened Cell occurrence",
+                  );
+                  setCellManagerOpen(false);
+                },
                 activeDocumentId: document.id,
                 onClose: () => setCellManagerOpen(false),
                 onCreate: (name) => {
@@ -4936,9 +5032,16 @@ export function App({
                 },
                 onOpen: (documentId) => {
                   setCellManagerOpen(false);
+                  setDocumentStack([]);
                   switchDocument(documentId);
                 },
                 onRename: renameCell,
+                onReorder: (documentIds, topDocumentId) => {
+                  commitStructure("reorder-cells", [
+                    { kind: "reorder_documents", documentIds },
+                    { kind: "set_top_document", documentId: topDocumentId },
+                  ]);
+                },
                 onDelete: (documentId) => {
                   if (deleteCell(documentId)) {
                     setCellManagerOpen(false);
@@ -4949,10 +5052,11 @@ export function App({
                   updateCellPortDirection(portId, direction, documentId),
                 onMovePort: (documentId, portId, delta) =>
                   moveCellPort(portId, delta, documentId),
-                onSetFormalParameters: (documentId, formalParameters) =>
-                  setCellFormalParameters(formalParameters, documentId),
+                onEditParameter: (documentId, name, change) =>
+                  editCellParameter(name, change, documentId),
                 externalDefinitions: project.externalSubcircuitDefinitions,
                 onSetExternalDefinition: setExternalSubcircuitDefinition,
+                onRemoveExternalDefinition: removeExternalSubcircuitDefinition,
                 onPlaceExternal: (definitionId) => {
                   const candidate = externalSubcircuitInsertCandidates.find(
                     (item) => item.definitionId === definitionId,
@@ -4983,7 +5087,6 @@ export function App({
                     },
                   });
                 },
-                onReset: commitManagedCellReset,
                 cloudProjects,
                 activeCloudProjectId: cloudBinding?.id ?? null,
                 onLoadCloudProject: loadCloudProjectForCellImport,
@@ -5037,6 +5140,7 @@ export function App({
                 project,
                 format: netlistPreferences.format,
                 portCase: netlistPreferences.portCase,
+                rootDocumentId: netlistRootDocumentId,
                 // The dialog only renders while open, so this IS the
                 // explicit check the author asked for.
                 electricalDiagnostics: requestElectricalDiagnostics(),
@@ -5552,6 +5656,14 @@ export function App({
                     }}
                     project={project}
                     format={netlistPreferences.format}
+                    rootDocumentId={netlistRootDocumentId}
+                    onRootChange={(documentId) =>
+                      setNetlistEntry(
+                        documentId
+                          ? { sessionId: projectSessionId, documentId }
+                          : null,
+                      )
+                    }
                     namingProfile={netlistNamingProfile}
                     portCase={netlistPreferences.portCase}
                     onFormatChange={netlistPreferences.selectFormat}
@@ -5859,6 +5971,23 @@ export function App({
                   ? {
                       code: {
                         instance: selectedInstance,
+                        ...(document.netlist
+                          ? {
+                              onUseCellParameter: (
+                                field: string,
+                                value: string,
+                                anchor: HTMLElement,
+                              ) =>
+                                setParameterBinding({
+                                  snapshot: project,
+                                  cell: document,
+                                  instanceId: selectedInstance.id,
+                                  field,
+                                  value,
+                                  anchor,
+                                }),
+                            }
+                          : {}),
                         displayName: selectedDisplayName,
                         defaultForeground: styleProfile.foreground,
                         revision: document.revision,

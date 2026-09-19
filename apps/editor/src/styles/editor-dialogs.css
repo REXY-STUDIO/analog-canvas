@@ -1,5 +1,50 @@
 /* Editor dialog owner: modal editor workflows and their responsive layout contracts. */
 
+.cell-parameter-popover {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: min(17rem, calc(100vw - 1rem));
+  max-height: calc(100dvh - 1rem);
+  overflow: auto;
+  padding: 0.65rem;
+  border: 1px solid var(--icm-border-strong);
+  border-radius: var(--icm-radius-md);
+  background: var(--icm-surface);
+  color: var(--icm-text);
+  box-shadow: var(--icm-shadow-lg);
+  font-size: var(--icm-font-sm);
+}
+.cell-parameter-popover form {
+  display: grid;
+  gap: 0.5rem;
+}
+.cell-parameter-popover header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.cell-parameter-popover header button {
+  margin-left: auto;
+}
+.cell-parameter-popover label {
+  display: grid;
+  grid-template-columns: 3.5rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.35rem;
+}
+.cell-parameter-popover input {
+  width: 100%;
+  min-width: 0;
+}
+.cell-parameter-popover p {
+  margin: 0;
+}
+.cell-parameter-popover footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .insert-dialog-backdrop {
   position: fixed;
   z-index: 80;
@@ -30,6 +75,27 @@
   color: var(--icm-text);
   background: var(--icm-surface);
   box-shadow: var(--icm-shadow-lg);
+}
+
+/* Cell placement shares picker behavior, not the Library's wide layout. */
+.insert-cell-dialog {
+  width: min(57.6rem, calc(60vw - 1.5rem));
+  min-width: min(22rem, calc(100vw - 2.5rem));
+  height: min(36rem, calc(100dvh - 2.5rem));
+}
+
+.insert-cell-dialog .insert-tile-grid {
+  grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
+  grid-auto-rows: max-content;
+}
+
+.insert-cell-dialog .insert-tile {
+  gap: 0.375rem;
+  padding: 0.625rem 0.4375rem 0.5625rem;
+}
+
+.insert-cell-dialog .insert-tile .insert-symbol-artwork {
+  height: 4.25rem;
 }
 
 .insert-dialog-header,
@@ -251,8 +317,8 @@
 }
 
 .cell-manager-list {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   border-right: 1px solid var(--icm-border);
   background: var(--icm-surface-muted);
@@ -272,6 +338,7 @@
 }
 
 .cell-manager-list-scroll {
+  flex: 1 1 0;
   min-height: 0;
   padding: 0 var(--icm-space-2);
   overflow-y: auto;
@@ -331,6 +398,7 @@
 }
 
 .cell-manager-new {
+  flex: 0 0 auto;
   margin: var(--icm-space-2);
 }
 
@@ -381,6 +449,10 @@
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(16rem, 0.85fr);
   gap: var(--icm-space-3);
+}
+
+.cell-interface-grid:not(:has(.cell-parameter-list)) {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .cell-interface-section,
@@ -481,10 +553,72 @@
   padding: 0;
 }
 
+.cell-hierarchy-tree ul {
+  list-style: none;
+  padding-left: 12px;
+  margin: 4px 0;
+}
+
+.cell-hierarchy-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cell-hierarchy-row button {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 3px 5px;
+}
+
 .cell-parameter-row {
   display: grid;
-  grid-template-columns: minmax(5rem, 1fr) minmax(5rem, 1fr) 28px;
+  grid-template-columns: minmax(4rem, 1fr) minmax(4rem, 1fr) 28px;
+  align-items: center;
   gap: 4px;
+}
+
+.cell-manager-name {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  font-weight: 600;
+  border: 1px solid transparent;
+  background: transparent;
+}
+.cell-manager-name:hover,
+.cell-manager-name:focus {
+  border-color: var(--icm-border-strong);
+}
+.cell-manager-entry {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-top: 2px solid transparent;
+}
+.cell-manager-entry .cell-manager-list-item {
+  flex: 1;
+  min-width: 0;
+}
+.cell-manager-entry[data-drop="active"] {
+  border-color: var(--icm-accent);
+  background: var(--icm-accent-soft);
+}
+.cell-drop-hint {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  background: var(--icm-surface);
+  color: var(--icm-accent);
+}
+.cell-manager-drop-end {
+  min-height: 1.6rem;
+  color: var(--icm-text-muted);
+  font-size: var(--icm-font-xs);
+  text-align: center;
 }
 
 .cell-inline-action {
