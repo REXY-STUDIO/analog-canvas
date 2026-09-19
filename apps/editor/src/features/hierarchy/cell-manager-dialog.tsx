@@ -13,6 +13,8 @@ import {
 import type { CloudProjectSummary } from "../editor-shell/cloud-projects";
 
 import { CellInterfaceEditor } from "./cell-interface-dialog";
+import { ExternalCircuitEditor } from "./external-circuit-editor";
+import type { ExternalDefinitionResult } from "./project-structure-commands";
 
 const RESET_ACTIONS: readonly {
   intent: CellResetIntent;
@@ -51,6 +53,7 @@ export function CellManagerDialog({
   onSetFormalParameters,
   externalDefinitions,
   onSetExternalDefinition,
+  onPlaceExternal,
   onReset,
   cloudProjects,
   activeCloudProjectId,
@@ -80,7 +83,10 @@ export function CellManagerDialog({
     >["formalParameters"],
   ): void;
   externalDefinitions: readonly ExternalSubcircuitDefinition[];
-  onSetExternalDefinition(definition: ExternalSubcircuitDefinition): void;
+  onSetExternalDefinition(
+    definition: ExternalSubcircuitDefinition,
+  ): ExternalDefinitionResult;
+  onPlaceExternal(definitionId: string): void;
   onReset(plan: CellResetPlan, command: string): boolean;
   cloudProjects: readonly CloudProjectSummary[];
   activeCloudProjectId: string | null;
@@ -95,6 +101,11 @@ export function CellManagerDialog({
   ): Promise<{ ok: boolean; message: string; documentId?: string }>;
 }) {
   const [selectedId, setSelectedId] = useState(activeDocumentId);
+  const [resourceKind, setResourceKind] = useState<"local" | "external">(
+    "local",
+  );
+  const [externalId, setExternalId] = useState<string | null>(null);
+  const [externalDraft, setExternalDraft] = useState(0);
   const [draftName, setDraftName] = useState("");
   const [creating, setCreating] = useState(false);
   const [renameId, setRenameId] = useState<string | null>(null);
@@ -110,6 +121,7 @@ export function CellManagerDialog({
   useEffect(() => {
     if (open) {
       setSelectedId(activeDocumentId);
+      setResourceKind("local");
       return;
     }
     setDraftName("");
@@ -129,6 +141,9 @@ export function CellManagerDialog({
     cells.find((cell) => cell.id === selectedId) ?? cells[0];
   const selectedDocument = project.documents.find(
     (document) => document.id === selectedEntry?.id,
+  );
+  const selectedExternal = externalDefinitions.find(
+    (definition) => definition.id === externalId,
   );
   const renameTarget = cells.find((cell) => cell.id === renameId);
   const deleteTarget = cells.find((cell) => cell.id === deleteId);
@@ -186,64 +201,146 @@ export function CellManagerDialog({
           </button>
         </header>
 
+        <div
+          className="cell-manager-resource-tabs"
+          role="group"
+          aria-label="Definition type"
+        >
+          <button
+            type="button"
+            aria-pressed={resourceKind === "local"}
+            onClick={() => setResourceKind("local")}
+          >
+            Cells
+          </button>
+          <button
+            type="button"
+            aria-pressed={resourceKind === "external"}
+            onClick={() => setResourceKind("external")}
+          >
+            External Circuits
+          </button>
+        </div>
         <div className="cell-manager-body">
-          <aside className="cell-manager-list" aria-label="Cells">
-            <div className="cell-manager-list-heading">
-              <span>Cells</span>
-              <span>{cells.length}</span>
-            </div>
-            <div className="cell-manager-list-scroll">
-              {cells.map((cell) => (
-                <button
-                  key={cell.id}
-                  type="button"
-                  className="cell-manager-list-item"
-                  aria-selected={cell.id === selectedEntry?.id}
-                  onClick={() => setSelectedId(cell.id)}
-                >
-                  <span>
-                    <strong>{cell.name}</strong>
-                    {cell.isTop ? <em>Top</em> : null}
-                  </span>
-                  <small>
-                    {cell.portCount} ports · {cell.callers.length} callers
-                  </small>
-                </button>
-              ))}
-            </div>
-            <button
-              type="button"
-              className="cell-manager-new"
-              onClick={() => {
-                setRenameId(null);
-                setDraftName("");
-                setDeleteId(null);
-                setCreating(true);
-              }}
-            >
-              New Cell
-            </button>
-            <button
-              type="button"
-              className="cell-manager-new"
-              disabled={cloudProjects.length === 0}
-              onClick={() => {
-                setCreating(false);
-                setRenameId(null);
-                setDeleteId(null);
-                setImporting(true);
-                setImportProjectId("");
-                setImportSource(null);
-                setImportCellId("");
-                setImportMessage("");
-              }}
-            >
-              Import Cell
-            </button>
-          </aside>
+          {resourceKind === "local" ? (
+            <aside className="cell-manager-list" aria-label="Cells">
+              <div className="cell-manager-list-heading">
+                <span>Cells</span>
+                <span>{cells.length}</span>
+              </div>
+              <div className="cell-manager-list-scroll">
+                {cells.map((cell) => (
+                  <button
+                    key={cell.id}
+                    type="button"
+                    className="cell-manager-list-item"
+                    aria-selected={cell.id === selectedEntry?.id}
+                    onClick={() => setSelectedId(cell.id)}
+                  >
+                    <span>
+                      <strong>{cell.name}</strong>
+                      {cell.isTop ? <em>Top</em> : null}
+                    </span>
+                    <small>
+                      {cell.portCount} ports · {cell.callers.length} callers
+                    </small>
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                className="cell-manager-new"
+                onClick={() => {
+                  setRenameId(null);
+                  setDraftName("");
+                  setDeleteId(null);
+                  setCreating(true);
+                }}
+              >
+                New Cell
+              </button>
+              <button
+                type="button"
+                className="cell-manager-new"
+                disabled={cloudProjects.length === 0}
+                onClick={() => {
+                  setCreating(false);
+                  setRenameId(null);
+                  setDeleteId(null);
+                  setImporting(true);
+                  setImportProjectId("");
+                  setImportSource(null);
+                  setImportCellId("");
+                  setImportMessage("");
+                }}
+              >
+                Import Cell
+              </button>
+            </aside>
+          ) : (
+            <aside className="cell-manager-list" aria-label="External Circuits">
+              <div className="cell-manager-list-heading">
+                <span>External Circuits</span>
+                <span>{externalDefinitions.length}</span>
+              </div>
+              <div className="cell-manager-list-scroll">
+                {externalDefinitions.map((definition) => (
+                  <button
+                    key={definition.id}
+                    type="button"
+                    className="cell-manager-list-item"
+                    aria-selected={definition.id === externalId}
+                    onClick={() => setExternalId(definition.id)}
+                  >
+                    <span>
+                      <strong>{definition.name}</strong>
+                      <em>External</em>
+                    </span>
+                    <small>{definition.terminals.length} ports</small>
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                className="cell-manager-new"
+                onClick={() => {
+                  setExternalId(null);
+                  setExternalDraft((value) => value + 1);
+                }}
+              >
+                New External Circuit
+              </button>
+            </aside>
+          )}
 
           <div className="cell-manager-detail">
-            {selectedEntry && selectedDocument ? (
+            {resourceKind === "external" ? (
+              <>
+                <header className="cell-manager-detail-header">
+                  <div className="cell-manager-title-row">
+                    <h3>{selectedExternal?.name ?? "New External Circuit"}</h3>
+                    <span>External</span>
+                  </div>
+                  {selectedExternal ? (
+                    <button
+                      type="button"
+                      onClick={() => onPlaceExternal(selectedExternal.id)}
+                    >
+                      Place
+                    </button>
+                  ) : null}
+                </header>
+                <ExternalCircuitEditor
+                  key={selectedExternal?.id ?? `new-${externalDraft}`}
+                  definition={selectedExternal}
+                  onSetExternalDefinition={(definition) => {
+                    const result = onSetExternalDefinition(definition);
+                    if (result.ok) setExternalId(definition.id);
+                    return result;
+                  }}
+                />
+              </>
+            ) : selectedEntry && selectedDocument ? (
               <>
                 <header className="cell-manager-detail-header">
                   <div>
@@ -296,8 +393,6 @@ export function CellManagerDialog({
                   onSetFormalParameters={(formalParameters) =>
                     onSetFormalParameters(selectedEntry.id, formalParameters)
                   }
-                  externalDefinitions={externalDefinitions}
-                  onSetExternalDefinition={onSetExternalDefinition}
                 />
 
                 <details className="cell-manager-danger-zone">

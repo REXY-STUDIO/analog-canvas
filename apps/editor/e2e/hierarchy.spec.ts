@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { analyzeDesignNetlist } from "@icm/netlist";
 
 import {
   revealPropertiesShelf,
@@ -97,6 +98,312 @@ async function setCellTerminalDirection(
     .selectOption(direction);
   await manager.getByLabel("Close Cell Manager").click();
 }
+
+test("manages external declarations independently of local Cell interfaces", async ({
+  page,
+}) => {
+  await page.goto("/editor");
+  await runCellCommand(page, "Manage Cells…");
+  const manager = page.getByRole("dialog", { name: "Cell Manager" });
+  const types = manager.getByRole("group", { name: "Definition type" });
+  await expect(
+    manager.getByLabel("Cell interface", { exact: true }),
+  ).toBeVisible();
+  await expect(manager.getByLabel("External subcircuit target")).toHaveCount(0);
+  await types
+    .getByRole("button", { name: "External Circuits", exact: true })
+    .click();
+  await expect(
+    manager.getByLabel("Cell interface", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    manager.getByRole("button", { name: "Open", exact: true }),
+  ).toHaveCount(0);
+  await expect(manager.getByText("Reset Cell", { exact: true })).toHaveCount(0);
+  await manager.getByLabel("External subcircuit target").fill("amplifier");
+  await manager
+    .getByLabel("External subcircuit terminals")
+    .fill("IN, OUT, VDD, VSS");
+  await manager
+    .getByLabel("External subcircuit formal parameters")
+    .fill("gain=10");
+  await manager
+    .getByRole("button", { name: "Create External Circuit", exact: true })
+    .click();
+  const externalList = manager.getByRole("complementary", {
+    name: "External Circuits",
+  });
+  await externalList.getByRole("button", { name: /amplifier/ }).click();
+  await expect(manager.getByLabel("External subcircuit terminals")).toHaveValue(
+    "IN, OUT, VDD, VSS",
+  );
+  await manager
+    .getByLabel("External subcircuit formal parameters")
+    .fill("gain=20");
+  await manager.getByRole("button", { name: "Save definition" }).click();
+  await types.getByRole("button", { name: "Cells", exact: true }).click();
+  await expect(
+    manager.getByLabel("Cell interface", { exact: true }),
+  ).toBeVisible();
+  await expect(manager.getByLabel("External subcircuit target")).toHaveCount(0);
+  await types
+    .getByRole("button", { name: "External Circuits", exact: true })
+    .click();
+  await expect(
+    manager.getByLabel("External subcircuit formal parameters"),
+  ).toHaveValue("gain=20");
+  await manager.getByLabel("Close Cell Manager").click();
+  await page.keyboard.press("Control+z");
+  await runCellCommand(page, "Manage Cells…");
+  await types
+    .getByRole("button", { name: "External Circuits", exact: true })
+    .click();
+  await externalList.getByRole("button", { name: /amplifier/ }).click();
+  await expect(
+    manager.getByLabel("External subcircuit formal parameters"),
+  ).toHaveValue("gain=10");
+});
+
+test("creates and places an external interface with connected netlist semantics", async ({
+  page,
+}) => {
+  await page.goto("/editor");
+  await runCellCommand(page, "Manage Cells…");
+  const manager = page.getByRole("dialog", { name: "Cell Manager" });
+  await manager
+    .getByRole("group", { name: "Definition type" })
+    .getByRole("button", { name: "External Circuits" })
+    .click();
+  const create = manager.getByRole("button", {
+    name: "Create External Circuit",
+    exact: true,
+  });
+  await create.click();
+  await expect(manager.getByRole("alert")).toContainText("target name");
+  await manager.getByLabel("External subcircuit target").fill("external_load");
+  await manager.getByLabel("External subcircuit terminals").fill("IN IN");
+  await create.click();
+  await expect(manager.getByRole("alert")).toContainText(/duplicate/i);
+  await manager.getByLabel("External subcircuit terminals").fill("IN OUT");
+  await create.click();
+  await expect(
+    manager.getByRole("button", { name: "Save definition" }),
+  ).toBeVisible();
+  await manager
+    .getByRole("button", { name: "New External Circuit", exact: true })
+    .click();
+  await expect(manager.getByLabel("External subcircuit target")).toHaveValue(
+    "",
+  );
+  await manager.getByLabel("External subcircuit target").fill("external_load");
+  await create.click();
+  await expect(manager.getByRole("alert")).toContainText(/duplicate/i);
+  await manager
+    .getByRole("complementary", { name: "External Circuits" })
+    .getByRole("button", { name: /external_load/ })
+    .click();
+  await manager.getByRole("button", { name: "Place", exact: true }).click();
+  await expect(manager).toHaveCount(0);
+  await page
+    .getByTestId("schematic-canvas")
+    .click({ position: { x: 260, y: 200 } });
+  await page.keyboard.press("Escape");
+  const externalId = await page
+    .locator('[data-canvas-hit-kind="instance"]')
+    .getAttribute("data-canvas-hit-id");
+  expect(externalId).toBeTruthy();
+  await expect(
+    page.locator('[data-pin-name="IN"] [data-text-run="subscript"]'),
+  ).toHaveCount(0);
+  await expect(
+    page.locator('[data-pin-name="OUT"] [data-text-run="subscript"]'),
+  ).toHaveCount(0);
+  await page.keyboard.press("Control+z");
+  await expect(page.getByTestId("active-instance-count")).toHaveText("0");
+  await page.keyboard.press("Control+Shift+z");
+  await expect(page.getByTestId("active-instance-count")).toHaveText("1");
+  await placeComponent(page, "resistor", { x: 500, y: 220 });
+  await page.keyboard.press("w");
+  await page.getByTestId(`terminal-${externalId}-IN`).click();
+  await page.getByTestId("terminal-R1-1").click();
+  await page.getByTestId(`terminal-${externalId}-OUT`).click();
+  await page.getByTestId("terminal-R1-2").click();
+  await page.keyboard.press("Escape");
+  await page.getByTestId(`hit-${externalId}`).click();
+  await revealPropertiesShelf(page);
+  const layoutShelf = page.getByTestId("selection-shelf");
+  if ((await layoutShelf.getAttribute("aria-expanded")) === "false")
+    await layoutShelf.click();
+  const layout = page.getByLabel("Cell symbol layout");
+  await expect(layout).toBeVisible();
+  await layout.getByLabel("Cell symbol width").fill("160");
+  await layout.getByLabel("Cell symbol width").press("Tab");
+  await layout.getByLabel("Cell symbol IN pin side").selectOption("north");
+  await layout.getByLabel("Cell symbol IN pin offset").fill("20");
+  await layout.getByLabel("Cell symbol IN pin offset").press("Tab");
+  await layout
+    .getByRole("button", { name: "Edit symbol layout on canvas" })
+    .click();
+  const inputHandle = page
+    .locator('[data-testid^="cell-symbol-pin-handle-"]')
+    .first();
+  const pinBox = (await inputHandle.boundingBox())!;
+  await page.mouse.move(
+    pinBox.x + pinBox.width / 2,
+    pinBox.y + pinBox.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    pinBox.x + pinBox.width / 2 + 20,
+    pinBox.y + pinBox.height / 2,
+  );
+  await expect(page.getByTestId("cell-symbol-layout-preview")).toContainText(
+    "IN",
+  );
+  await page.mouse.up();
+  const movedPinOffset = Number(
+    await layout.getByLabel("Cell symbol IN pin offset").inputValue(),
+  );
+  expect(movedPinOffset).toBeGreaterThan(20);
+  const bodyHandle = page.getByTestId("cell-symbol-body-handle");
+  const box = (await bodyHandle.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    box.x + box.width / 2 + 30,
+    box.y + box.height / 2 + 20,
+  );
+  await expect(page.getByTestId("cell-symbol-layout-preview")).toBeVisible();
+  await page.mouse.up();
+  await expect(page.getByTestId("cell-symbol-layout-preview")).toHaveCount(0);
+  await layout
+    .getByRole("button", { name: "Done editing canvas layout" })
+    .click();
+  // The same history path restores the definition and following routes.
+  const resizedWidth = await layout
+    .getByLabel("Cell symbol width")
+    .inputValue();
+  expect(Number(resizedWidth)).toBeGreaterThan(160);
+  await page.keyboard.press("Control+z");
+  await expect(layout.getByLabel("Cell symbol width")).toHaveValue("160");
+  await page.keyboard.press("Control+Shift+z");
+  await expect(layout.getByLabel("Cell symbol width")).toHaveValue(
+    resizedWidth,
+  );
+  await layoutShelf.click();
+  await expect(page.getByTestId("cell-symbol-layout-overlay")).toHaveCount(0);
+  const project = JSON.parse(
+    (await downloadBytes(page, "File", "Export Project File…")).toString(
+      "utf8",
+    ),
+  );
+  const document = project.documents.find(
+    (item: { id: string }) => item.id === project.topDocumentId,
+  );
+  const instance = document.instances.find(
+    (item: { id: string }) => item.id === externalId,
+  );
+  expect(instance.netlist.binding).toEqual({
+    kind: "external-subcircuit",
+    definitionId: project.externalSubcircuitDefinitions[0].id,
+  });
+  expect(
+    project.externalSubcircuitDefinitions[0].presentation.pinPlacements,
+  ).toEqual([
+    {
+      terminalId: project.externalSubcircuitDefinitions[0].terminals[0].id,
+      side: "north",
+      offset: movedPinOffset,
+    },
+  ]);
+  for (const pinName of ["IN", "OUT"]) {
+    expect(
+      document.nets.some(
+        (net: { terminals: { instanceId: string; pinName: string }[] }) =>
+          net.terminals.some(
+            (pin) => pin.instanceId === externalId && pin.pinName === pinName,
+          ) && net.terminals.some((pin) => pin.instanceId === "R1"),
+      ),
+    ).toBe(true);
+  }
+  const analyzed = analyzeDesignNetlist(project);
+  expect(
+    analyzed.diagnostics.filter((item) => item.severity === "error"),
+  ).toEqual([]);
+  const call = analyzed.ir?.cells
+    .flatMap((cell) => cell.instances)
+    .find((item) => item.reference === instance.reference);
+  expect(call?.target).toBe("external_load");
+  expect(call?.nodes.map((node) => node.pinName)).toEqual(["IN", "OUT"]);
+  expect(analyzed.ir?.externalMasters?.map((master) => master.name)).toContain(
+    "external_load",
+  );
+  expect(analyzed.ir?.cells.map((cell) => cell.name)).not.toContain(
+    "external_load",
+  );
+  await clickCommand(page, "Netlist", "Check Report…");
+  await expect(page.getByTestId("netlist-preview")).toContainText(
+    new RegExp(`${instance.reference}\\s+\\S+\\s+\\S+\\s+external_load`, "u"),
+  );
+});
+
+test("inherits explicit Port subscripts without guessing from pin names", async ({
+  page,
+}) => {
+  await page.goto("/editor");
+  await createCell(page, "FormattedStage");
+  await placeCellPin(page, { name: "Vout", position: { x: 300, y: 180 } });
+  const internalLabel = page.locator('[data-object-id="instance-label-P1"]');
+  await expect(
+    internalLabel.locator('[data-text-run="subscript"]'),
+  ).toHaveCount(0);
+  await page.getByTestId("annotation-hit-instance-label-P1").dblclick();
+  const editor = page.getByRole("textbox", { name: "Canvas text editor" });
+  await editor.fill("Vout");
+  await editor.press("Home");
+  await editor.press("ArrowRight");
+  await editor.press("Shift+End");
+  await page.getByRole("button", { name: "Subscript", exact: true }).click();
+  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await expect(internalLabel.locator('[data-text-run="subscript"]')).toHaveText(
+    "out",
+  );
+  await page
+    .getByTestId("cell-navigation")
+    .getByRole("button", { name: "Top", exact: true })
+    .click();
+  await runCellCommand(page, "Place Cell");
+  await page
+    .getByRole("dialog", { name: "Place Hierarchical Cell" })
+    .getByRole("option", { name: /FormattedStage/ })
+    .click();
+  await page
+    .getByTestId("schematic-canvas")
+    .click({ position: { x: 420, y: 180 } });
+  await page.keyboard.press("Escape");
+  const parentPin = page.locator('[data-pin-name="Vout"]');
+  await expect(parentPin.locator('[data-text-run="subscript"]')).toHaveText(
+    "out",
+  );
+  await page.getByTestId("hit-X1").dblclick();
+  await page.getByTestId("annotation-hit-instance-label-P1").dblclick();
+  await editor.focus();
+  await editor.press("Control+Home");
+  await editor.press("ArrowRight");
+  await editor.press("Shift+End");
+  await page.getByRole("button", { name: "Subscript", exact: true }).click();
+  await expect(editor.locator("sub")).toHaveCount(0);
+  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await expect(
+    internalLabel.locator('[data-text-run="subscript"]'),
+  ).toHaveCount(0);
+  await page
+    .getByTestId("cell-navigation")
+    .getByRole("button", { name: "Top", exact: true })
+    .click();
+  await expect(parentPin).toHaveText("Vout");
+  await expect(parentPin.locator('[data-text-run="subscript"]')).toHaveCount(0);
+});
 
 test("places an unreferenced top Cell in an ordinary new Cell", async ({
   page,
@@ -522,6 +829,12 @@ test("copies and independently deletes Formal Cell Pins", async ({ page }) => {
   await page.keyboard.press("Escape");
 
   await expect(page.getByTestId("hit-P1-copy-1")).toBeVisible();
+  await expect(page.locator('[data-object-id="instance-label-P1"]')).toHaveText(
+    "VIN",
+  );
+  await expect(
+    page.locator('[data-object-id="instance-label-P1-copy-1"]'),
+  ).toHaveText("Vin2");
   await page.getByTestId("hit-P1").click();
   await page.keyboard.press("Delete");
   await expect(page.getByTestId("hit-P1")).toHaveCount(0);
@@ -533,13 +846,13 @@ test("copies and independently deletes Formal Cell Pins", async ({ page }) => {
   }
   await expect(
     page.locator('[data-object-id="instance-label-P1-copy-1"]'),
-  ).toContainText("VIN");
+  ).toHaveText("Vin2");
   await clickCommand(page, "Netlist", "Check Report…");
   await expect(
     page
       .getByRole("dialog", { name: "Check Report" })
       .getByTestId("netlist-preview"),
-  ).toContainText(".subckt dut VIN");
+  ).toContainText(".subckt dut VIN2");
 });
 
 test("edits a Cell Pin name and RichText presentation in place", async ({

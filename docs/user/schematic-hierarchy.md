@@ -12,6 +12,29 @@ declarations. A referenced Cell's delete control is
 disabled; delete its caller Instances normally before deleting the now
 unreferenced definition.
 
+The Manager separates **Cells** (local schematics) from **External Circuits**
+(project-level declarations for external models). Local Cell interfaces come
+from their canvas Pins; external declarations specify the model target,
+ordered terminals, and formal parameters. Use **New External Circuit** in
+the external list to add a declaration, or select an existing one to edit it.
+External definitions have no local schematic to open or reset. Editing their
+declaration does not import or modify the external model implementation.
+Enter a target name and its ordered terminals (commas or spaces), then use
+**Create External Circuit**. Select a saved declaration and choose **Place**
+to start ordinary canvas placement; **Save definition** updates its interface.
+Validation errors appear inside the Manager. Its pins connect to Nets and
+export as an external subcircuit call, but simulation still requires the actual
+model implementation in the simulation source files.
+Generic External blocks share the Cell symbol layout controls in Properties:
+body size, pin side/offset, and canvas drag handles. A layout edit updates every
+instance and follows connected routes in the same undoable transaction. Native
+PDK device symbols retain their reviewed artwork instead of exposing generic
+block resize handles.
+Port names do not infer subscripts from spelling. Local Cell symbols inherit
+the representative Port annotation's explicit RichText formatting, including
+subscripts; generic External pin names remain whole by default. This does not
+change electrical names or the typography of device references such as M1.
+
 Use **New Cell** in the Cell Manager to create a module. **Place Cell** in the
 hierarchy row, or **Edit → Place Cell from this Project…**, opens the Insert
 dialog as a searchable, Cells-only **Place Hierarchical Cell** picker. Select a
@@ -57,11 +80,11 @@ adapt without a separate interface editor.
 
 Each visible marker remains an ordinary Instance for selection, move, wiring,
 copy, and deletion. Copying a Cell Pin creates a new formal terminal with an
-independent stable identity, name, direction, and internal Base Net. An
-in-place copy retains the same visible name; later edits to either Pin do not
-affect the other. As with every copied connected component, a Pin
-whose Net crosses the selection boundary remains attached to that existing
-Net, but its declaration identity is still independent. Placing or renaming a
+independent stable identity and a freshly allocated interface name, with its
+direction preserved. Copy follows ordinary insertion: destination contacts
+determine connectivity; off-selection source connectivity is not inherited.
+Only explicitly selected wires travel with the copy. Later edits to either
+Pin do not affect the other. Placing or renaming a
 Pin to the same name never attaches it to another Pin or merges their Nets.
 
 When the Cell is used as a hierarchical block or exported, a read-only final

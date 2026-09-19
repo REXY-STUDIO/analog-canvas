@@ -9,7 +9,6 @@ import {
   planReorderCellPort,
   planReorderCellTerminal,
   planSetCellSymbolPresentation,
-  planSetCellTerminalPlacement,
   planUpdateCellTerminalDirection,
   planUpdateCellPortDirection,
   proposeSetCellFormalParameters,
@@ -19,6 +18,7 @@ import type { ProjectStructureEdit, SchematicEdit } from "@icm/edit-engine";
 import {
   createEmptyDocument,
   createId,
+  CircuitProjectSchema,
   semanticTextDocument,
 } from "@icm/model";
 import type {
@@ -28,12 +28,18 @@ import type {
   SchematicDocument,
 } from "@icm/model";
 import type { SymbolResolver } from "@icm/symbols";
+import type { BlockSymbolLayoutTarget } from "./block-symbol-layout-target";
 
 type CellDirection = "input" | "output" | "inout" | "passive";
 type CellPinSide = "north" | "east" | "south" | "west" | "auto";
 type FormalParameters = NonNullable<
   SchematicDocument["netlist"]
 >["formalParameters"];
+
+export interface ExternalDefinitionResult {
+  ok: boolean;
+  message: string;
+}
 
 export interface ProjectStructureCommandDependencies {
   project: CircuitProject;
@@ -349,27 +355,56 @@ export function createProjectStructureCommands({
 
   const setExternalSubcircuitDefinition = (
     definition: ExternalSubcircuitDefinition,
-  ): void => {
+  ): ExternalDefinitionResult => {
+    const fail = (message: string): ExternalDefinitionResult => {
+      setStatus(message);
+      return { ok: false, message };
+    };
     try {
+      const collision = project.documents.some(
+        (document) =>
+          document.netlist?.name.toLowerCase() ===
+          definition.name.toLowerCase(),
+      );
+      if (collision)
+        return fail("An existing Cell already uses this target name.");
+      const candidate = CircuitProjectSchema.safeParse({
+        ...project,
+        externalSubcircuitDefinitions: [
+          ...project.externalSubcircuitDefinitions.filter(
+            (item) => item.id !== definition.id,
+          ),
+          definition,
+        ],
+      });
+      if (!candidate.success) {
+        return fail(
+          candidate.error.issues.map((issue) => issue.message).join("; "),
+        );
+      }
       const proposal = proposeUpsertExternalSubcircuitDefinition(
         project,
         definition,
       );
       if (proposal.diagnostics.length > 0) {
-        setStatus(
+        return fail(
           `Cannot update external interface: ${proposal.diagnostics[0]}`,
         );
-        return;
       }
       if (
         commitStructure("upsert-external-subcircuit-interface", [
           ...proposal.edits,
         ])
       ) {
-        setStatus(`Updated external subcircuit ${definition.name}`);
+        const message = `Updated external subcircuit ${definition.name}`;
+        setStatus(message);
+        return { ok: true, message };
       }
+      return fail(
+        "Could not save the external interface. The Project was not changed.",
+      );
     } catch (error) {
-      setStatus(
+      return fail(
         error instanceof Error
           ? error.message
           : "Could not update external subcircuit interface",
@@ -377,8 +412,31 @@ export function createProjectStructureCommands({
     }
   };
 
+  const saveBlockSymbolPresentation = (
+    target: BlockSymbolLayoutTarget,
+    presentation: NonNullable<BlockSymbolLayoutTarget["presentation"]>,
+  ): ProjectStructureEdit[] => {
+    if (target.kind === "cell") {
+      return planSetCellSymbolPresentation(
+        project,
+        target.ownerId,
+        presentation,
+      );
+    }
+    const definition = project.externalSubcircuitDefinitions.find(
+      (item) => item.id === target.ownerId,
+    );
+    if (!definition) throw new Error("External definition no longer exists");
+    return [
+      {
+        kind: "upsert_external_subcircuit_definition",
+        definition: { ...definition, presentation },
+      },
+    ];
+  };
+
   const setCellSymbolBodySize = (
-    child: SchematicDocument,
+    child: BlockSymbolLayoutTarget,
     width: number,
     height: number,
   ): void => {
@@ -393,11 +451,11 @@ export function createProjectStructureCommands({
       setStatus("Cell symbol size must use positive 10-unit grid values");
       return;
     }
-    const current = child.presentation.cellSymbol;
+    const current = child.presentation;
     if (
       commitStructure(
         "resize-cell-symbol",
-        planSetCellSymbolPresentation(project, child.id, {
+        saveBlockSymbolPresentation(child, {
           ...(current?.pinPlacements
             ? { pinPlacements: current.pinPlacements }
             : {}),
@@ -410,22 +468,26 @@ export function createProjectStructureCommands({
   };
 
   const setCellSymbolPortPlacement = (
-    child: SchematicDocument,
+    child: BlockSymbolLayoutTarget,
     terminalId: string,
     side: CellPinSide,
     offset: number,
   ): void => {
     try {
+      if (!Number.isInteger(offset) || offset % 10 !== 0) {
+        throw new Error("Cell Pin position must be a multiple of 10");
+      }
+      const pinPlacements = (child.presentation?.pinPlacements ?? []).filter(
+        (pin) => pin.terminalId !== terminalId,
+      );
+      if (side !== "auto") pinPlacements.push({ terminalId, side, offset });
       if (
         commitStructure(
           "move-cell-symbol-pin",
-          planSetCellTerminalPlacement(
-            project,
-            child.id,
-            terminalId,
-            side,
-            offset,
-          ),
+          saveBlockSymbolPresentation(child, {
+            ...child.presentation,
+            pinPlacements,
+          }),
         )
       ) {
         setStatus("Moved Cell symbol pin in every parent instance");
