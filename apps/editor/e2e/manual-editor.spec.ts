@@ -385,10 +385,11 @@ test("property code keeps a drawn wired instance visible and moves it with grid 
 }) => {
   await page.goto("/editor");
   await placeComponent(page, "resistor", { x: 360, y: 220 });
-  const canvas = page.getByTestId("schematic-canvas");
   await clickDrawTool(page, "wire");
   await page.getByTestId("terminal-R1-2").click();
-  await canvas.dblclick({ position: { x: 500, y: 350 } });
+  await page
+    .getByTestId("schematic-canvas")
+    .dblclick({ position: { x: 500, y: 350 } });
   await page.keyboard.press("Escape");
   await page.getByTestId("hit-R1").click();
   await openSelectionShelf(page);
@@ -397,36 +398,34 @@ test("property code keeps a drawn wired instance visible and moves it with grid 
       "utf8",
     ),
   );
-  await setComponentCodeField(page, "placement", null);
+  const revision = await page.getByTestId("revision").textContent();
+  const code = JSON.parse(await readComponentPropertyCode(page));
+  code.coordinate = null;
+  await page
+    .getByLabel("Editable Canvas property code")
+    .fill(JSON.stringify(code));
+  const discard = page.getByRole("button", {
+    name: "Discard draft",
+    exact: true,
+  });
+  await expect(discard).toBeVisible();
   await expect(page.getByTestId("hit-R1")).toHaveCount(1);
-  await expect(
-    page.getByTestId("component-property-code-editor"),
-  ).toContainText(
-    "placement cannot be changed to null; a Cell never holds a device its drawing does not show",
-  );
+  await expect(page.getByTestId("revision")).toHaveText(revision!);
   const saved = JSON.parse(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
   );
-  expect(saved.documents[0].instances).toHaveLength(1);
-  expect(saved.documents[0].instances[0].placement).toEqual(
-    before.documents[0].instances[0].placement,
-  );
+  expect(saved.documents[0].instances).toEqual(before.documents[0].instances);
   expect(saved.documents[0].nets).toEqual(before.documents[0].nets);
-  expect(saved.documents[0].routes).toHaveLength(
-    before.documents[0].routes.length,
-  );
-  await setComponentCodeField(page, "placement", {
-    coordinate: [421, 281],
-    rotation: 90,
-    mirror: "horizontal",
-  });
+  expect(saved.documents[0].routes).toEqual(before.documents[0].routes);
+  await discard.click();
+  await setComponentCodeField(page, "coordinate", [421, 281]);
   await expect(page.getByTestId("hit-R1")).toHaveCount(1);
-  await expectComponentCodeField(page, "placement.coordinate", [420, 280]);
+  await expectComponentCodeField(page, "coordinate", [420, 280]);
   await clickCommand(page, "Edit", "Undo");
   await expect(page.getByTestId("hit-R1")).toHaveCount(1);
-  await expectComponentCodeField(page, "placement.coordinate", [
+  await expectComponentCodeField(page, "coordinate", [
     before.documents[0].instances[0].placement.position.x,
     before.documents[0].instances[0].placement.position.y,
   ]);
@@ -1461,10 +1460,10 @@ test("component property code turns a connected part by 45 degrees", async ({
   await page.getByTestId("hit-R1").click();
   await openSelectionShelf(page);
   await editComponentPropertyCode(page, (code) => {
-    code.placement.rotation = 45;
+    code.rotation = 45;
   });
 
-  await expectComponentCodeField(page, "placement.rotation", 45);
+  await expectComponentCodeField(page, "rotation", 45);
   await expect(page.getByTestId("revision")).toHaveText("4");
   await expect(page.getByTestId("status")).toHaveText(
     "Applied Canvas property code to R1",
@@ -1984,11 +1983,9 @@ test("colors an electrical wire and restores the Razavi default with Auto", asyn
 
   await clickRoute(page, "route-ui-1");
   await openSelectionShelf(page);
-  expect(
-    JSON.parse(await readComponentPropertyCode(page)).appearance.color,
-  ).toBe("auto");
+  expect(JSON.parse(await readComponentPropertyCode(page)).color).toBe("auto");
   await editComponentPropertyCode(page, (code) => {
-    code.appearance.color = [204, 34, 0];
+    code.color = [204, 34, 0];
   });
   await expect
     .poll(() => routeInk(page, "route-ui-1", "stroke"))
@@ -1998,12 +1995,10 @@ test("colors an electrical wire and restores the Razavi default with Auto", asyn
   );
 
   await editComponentPropertyCode(page, (code) => {
-    code.appearance.color = "auto";
+    code.color = "auto";
   });
   await expect.poll(() => routeInk(page, "route-ui-1", "stroke")).toBe("#000");
-  expect(
-    JSON.parse(await readComponentPropertyCode(page)).appearance.color,
-  ).toBe("auto");
+  expect(JSON.parse(await readComponentPropertyCode(page)).color).toBe("auto");
 });
 
 test("fills a closed shape and moves it behind or in front of circuit artwork", async ({
@@ -2096,13 +2091,12 @@ test("changes wire line style while preserving color, arrow, export and undo", a
   await clickRoute(page, "route-ui-1");
   await openSelectionShelf(page);
   expect(JSON.parse(await readComponentPropertyCode(page)).appearance).toEqual({
-    color: "auto",
     lineStyle: "solid",
     directionArrow: "none",
   });
   await editComponentPropertyCode(page, (code) => {
+    code.color = [220, 38, 38];
     code.appearance = {
-      color: [220, 38, 38],
       lineStyle: "dashed",
       directionArrow: "end",
     };
@@ -3144,19 +3138,22 @@ test("applies Route name, scope, and appearance from one JSON edit", async ({
   const properties = page.getByRole("complementary", { name: "Properties" });
   await expect(properties.getByLabel("Annotation property code")).toBeVisible();
   await expect(properties.getByLabel("Electrical Net label")).toHaveCount(0);
-  expect(JSON.parse(await readComponentPropertyCode(page))).toEqual({
-    net: { name: "", scope: "local" },
+  expect(JSON.parse(await readComponentPropertyCode(page))).toMatchObject({
+    type: "wire",
+    name: "",
+    color: "auto",
+    net: { scope: "local" },
     appearance: {
-      color: "auto",
       lineStyle: "solid",
       directionArrow: "none",
     },
   });
   const revision = Number(await page.getByTestId("revision").textContent());
   await editComponentPropertyCode(page, (code) => {
-    code.net = { name: "SIGNAL", scope: "global" };
+    code.name = "SIGNAL";
+    code.net.scope = "global";
+    code.color = [220, 38, 38];
     code.appearance = {
-      color: [220, 38, 38],
       lineStyle: "dotted",
       directionArrow: "end",
     };
@@ -3185,10 +3182,12 @@ test("applies Route name, scope, and appearance from one JSON edit", async ({
   );
   await clickCommand(page, "Edit", "Undo");
   await expect(page.getByTestId("revision")).toHaveText(String(revision + 2));
-  expect(JSON.parse(await readComponentPropertyCode(page))).toEqual({
-    net: { name: "", scope: "local" },
+  expect(JSON.parse(await readComponentPropertyCode(page))).toMatchObject({
+    type: "wire",
+    name: "",
+    color: "auto",
+    net: { scope: "local" },
     appearance: {
-      color: "auto",
       lineStyle: "solid",
       directionArrow: "none",
     },
@@ -3224,7 +3223,7 @@ test("edits instance, electrical Net, and free text with bounded label handles",
   await clickRoute(page, "route-ui-1", 0.5, 0);
   await openSelectionShelf(page);
   await editComponentPropertyCode(page, (code) => {
-    code.net.name = "SIGNAL";
+    code.name = "SIGNAL";
   });
   await expect(page.locator('[data-layer="annotations"]')).toContainText(
     "SIGNAL",
@@ -3257,7 +3256,7 @@ test("edits instance, electrical Net, and free text with bounded label handles",
   await clickRoute(page, "route-ui-2", 0.5, 0);
   await openSelectionShelf(page);
   await editComponentPropertyCode(page, (code) => {
-    code.net.name = "Vref";
+    code.name = "Vref";
   });
   await expect(page.getByTestId("net-count")).toHaveText("2");
   await expect(page.getByTestId("status")).toHaveText(
@@ -3298,7 +3297,7 @@ test("formats a Net Label without changing its electrical Net name", async ({
   await clickRoute(page, "route-ui-1", 0.5, 0);
   await openSelectionShelf(page);
   await editComponentPropertyCode(page, (code) => {
-    code.net.name = "VB";
+    code.name = "VB";
   });
   const label = page.getByTestId("annotation-hit-net-label-route-ui-1");
   await label.dblclick();
@@ -4073,7 +4072,12 @@ test("C inserts a fresh device instead of copying its name alias and source conn
   await page.getByTestId("hit-R1").click({ button: "right" });
   await openSelectionShelf(page);
   await setComponentCodeField(page, "netlistName", "R99");
-  await setComponentCodeField(page, "displayName", "Old_alias");
+  await page.getByTestId("annotation-hit-instance-label-R1").dblclick();
+  await page.getByRole("checkbox", { name: "Use display alias" }).check();
+  await page
+    .getByRole("textbox", { name: "Canvas text editor" })
+    .fill("Old_alias");
+  await page.getByRole("button", { name: "Apply text changes" }).click();
   await page.getByTestId("hit-R1").click();
   await copySelectionAt(page, { x: 560, y: 420 });
   await expect(page.getByTestId("instance-count")).toHaveText("3");
@@ -4396,7 +4400,7 @@ test("deletes imported Net Labels with non-editor ids", async ({ page }) => {
   await clickRoute(page, "route-imported-h");
   await openSelectionShelf(page);
   await editComponentPropertyCode(page, (code) => {
-    code.net.name = "";
+    code.name = "";
   });
   await expect(
     page.getByTestId("annotation-hit-imported-label-horizontal"),
@@ -4750,6 +4754,117 @@ test("edits the complete Project Code with one undo boundary and protects a stal
   await expect(apply).toBeDisabled();
   await reload.click();
   await expect(projectCode).toContainText('"name": "Canvas changed"');
+});
+
+test("pastes complete Project Code between independent sessions with identical artwork and undo", async ({
+  page,
+  browser,
+  baseURL,
+}) => {
+  const sourceContext = await browser.newContext(baseURL ? { baseURL } : {});
+  try {
+    const sourcePage = await sourceContext.newPage();
+    await sourcePage.goto("/editor");
+    await sourcePage
+      .getByTestId("project-file")
+      .setInputFiles(
+        resolve("apps/editor/src/examples/common-source-amplifier.icproj.json"),
+      );
+    await sourcePage.getByTestId("project-code-toggle").click();
+    const sourceEditor = sourcePage.getByRole("textbox", {
+      name: "Project code",
+    });
+    await expect(sourceEditor).toBeVisible();
+    // CodeMirror virtualizes long documents; select/copy reads the whole file.
+    await sourceContext.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await sourceEditor.focus();
+    await sourcePage.keyboard.press("ControlOrMeta+a");
+    await sourcePage.keyboard.press("ControlOrMeta+c");
+    let sourceCode = await sourcePage.evaluate(() =>
+      navigator.clipboard.readText(),
+    );
+    let sourceProject = JSON.parse(sourceCode);
+    const beforeCustomization = await sourcePage
+      .locator('[data-layer="formal"]')
+      .innerHTML();
+    const definition = sourceProject.componentDefinitions.find(
+      (item: { symbol: { id: string } }) => item.symbol.id === "resistor",
+    );
+    expect(definition).toBeDefined();
+    definition.symbol.primitives.push({
+      kind: "circle",
+      center: { x: 9, y: 0 },
+      radius: 4,
+    });
+    await sourceEditor.fill(JSON.stringify(sourceProject, null, 2));
+    await sourcePage
+      .getByRole("button", { name: "Apply", exact: true })
+      .click();
+    await expect
+      .poll(() => sourcePage.locator('[data-layer="formal"]').innerHTML())
+      .not.toBe(beforeCustomization);
+    await sourceEditor.focus();
+    await sourcePage.keyboard.press("ControlOrMeta+a");
+    await sourcePage.keyboard.press("ControlOrMeta+c");
+    sourceCode = await sourcePage.evaluate(() =>
+      navigator.clipboard.readText(),
+    );
+    sourceProject = JSON.parse(sourceCode);
+    const artwork = await sourcePage
+      .locator('[data-layer="formal"]')
+      .innerHTML();
+    expect(artwork.length).toBeGreaterThan(100);
+
+    await page.goto("/editor");
+    const recipient = createEmptyProject("paste-recipient", "Recipient");
+    recipient.documents[0]!.id = "recipient-cell";
+    recipient.topDocumentId = "recipient-cell";
+    await page.getByTestId("project-file").setInputFiles({
+      name: "recipient.icproj.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(JSON.stringify(recipient)),
+    });
+    const original = JSON.parse(
+      (await downloadBytes(page, "File", "Export Project File…")).toString(
+        "utf8",
+      ),
+    );
+    await page.getByTestId("project-code-toggle").click();
+    const recipientEditor = page.getByRole("textbox", { name: "Project code" });
+    await expect(recipientEditor).toBeVisible();
+    expect(original.id).not.toBe(sourceProject.id);
+    await recipientEditor.fill(sourceCode);
+    await page.getByRole("button", { name: "Apply", exact: true }).click();
+    await expect(page.getByTestId("project-name-input")).toHaveValue(
+      sourceProject.name,
+    );
+    await expect
+      .poll(() => page.locator('[data-layer="formal"]').innerHTML())
+      .toBe(artwork);
+
+    const applied = JSON.parse(
+      (await downloadBytes(page, "File", "Export Project File…")).toString(
+        "utf8",
+      ),
+    );
+    expect(applied).toEqual({
+      ...sourceProject,
+      id: original.id,
+      structureRevision: original.structureRevision + 1,
+      documents: sourceProject.documents.map((document: SchematicDocument) => ({
+        ...document,
+        revision: 0,
+      })),
+    });
+
+    await page.getByTestId("draw-tool-undo").click();
+    await expect(page.getByTestId("project-name-input")).toHaveValue(
+      original.name,
+    );
+    await expect(page.getByTestId("canvas-empty-state")).toBeVisible();
+  } finally {
+    await sourceContext.close();
+  }
 });
 
 test("shows the component-library tooltip without a native hover delay", async ({

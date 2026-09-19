@@ -1168,9 +1168,9 @@ test("renames one supply marker without changing its same-name peer", async ({
   await expect(page.getByRole("textbox", { name: "Supply name" })).toHaveCount(
     0,
   );
-  await setComponentCodeField(page, "netName", "AVDD");
+  await setComponentCodeField(page, "name", "AVDD");
 
-  await expectComponentCodeField(page, "netName", "AVDD");
+  await expectComponentCodeField(page, "name", "AVDD");
   await expect(
     canvas.locator('[data-object-id="power-label-vdd1"]'),
   ).toContainText("AVDD");
@@ -1488,7 +1488,7 @@ test("carries a default and manual Value through placement and Q property editin
     "aria-label",
     "Canvas property code",
   );
-  await expectComponentCodeField(page, "displayName", "R1");
+  await expectComponentCodeField(page, "name", "R1");
   await expectComponentCodeField(page, "netlistName", "R1");
   await editComponentPropertyCode(page, (code) => {
     code.netlistName = "R7";
@@ -1732,8 +1732,8 @@ test("edits independent input and output swaps with undo, named connections and 
   await expect(outputs).toHaveAttribute("aria-checked", "true");
   await inputs.click();
   await expectComponentCodeField(page, "appearance.inputsSwapped", true);
-  await setComponentCodeField(page, "placement.rotation", 90);
-  await setComponentCodeField(page, "placement.mirror", "horizontal");
+  await setComponentCodeField(page, "rotation", 90);
+  await setComponentCodeField(page, "mirror", "horizontal");
   await expectComponentCodeField(page, "appearance.outputsSwapped", true);
 
   const bytes = await downloadBytes(page, "File", "Export Project File…");

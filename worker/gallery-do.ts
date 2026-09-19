@@ -254,6 +254,8 @@ export interface GalleryEntrySummary {
   id: string;
   name: string;
   author: string;
+  /** Stable identity behind the mutable public byline; null for legacy rows. */
+  ownerUserId: string | null;
   description: string;
   createdAt: string;
   /**
@@ -343,6 +345,7 @@ type EntrySummaryRow = Pick<
   | "author"
   | "description"
   | "created_at"
+  | "owner_user_id"
   | "schema_version"
   | "tags"
   | "netlistable"
@@ -363,6 +366,9 @@ interface PreviewRow extends PreviewAccessRow {
 
 const TOKENZHANG_BYLINE_MIGRATION = "2026-08-26-tokenzhang-to-zhishuai-zhang";
 const TOKENZHANG_BYLINE = "Zhishuai Zhang";
+const MAGIC_LI_BYLINE_MIGRATION = "2026-09-19-3187863239-netizen-to-magic-li";
+const MAGIC_LI_LEGACY_BYLINE = "3187863239-netizen";
+const MAGIC_LI_BYLINE = "Magic Li";
 const VERSION_RETENTION_MIGRATION = "2026-08-27-gallery-version-retention-2";
 const PREVIEW_DIMENSIONS_MIGRATION = "2026-09-02-gallery-preview-dimensions";
 
@@ -373,6 +379,7 @@ function summaryOf(
     id: row.id,
     name: row.name,
     author: row.author,
+    ownerUserId: row.owner_user_id,
     description: row.description,
     createdAt: row.created_at,
     // Existing rows receive the additive column as empty. "legacy" moves
@@ -587,6 +594,30 @@ export class GalleryDO {
       const applied = this.sql
         .exec<{ id: string }>(
           "SELECT id FROM data_migrations WHERE id = ?",
+          MAGIC_LI_BYLINE_MIGRATION,
+        )
+        .toArray();
+      if (applied.length > 0) return;
+      // A restored snapshot must not bring the old public byline back, so the
+      // current entries and their restorable histories move together.
+      for (const table of ["gallery_entries", "gallery_entry_versions"]) {
+        this.sql.exec(
+          `UPDATE ${table} SET author = ?
+           WHERE LOWER(TRIM(author)) = LOWER(?)`,
+          MAGIC_LI_BYLINE,
+          MAGIC_LI_LEGACY_BYLINE,
+        );
+      }
+      this.sql.exec(
+        "INSERT INTO data_migrations(id, applied_at) VALUES (?, ?)",
+        MAGIC_LI_BYLINE_MIGRATION,
+        new Date().toISOString(),
+      );
+    });
+    this.state.storage.transactionSync(() => {
+      const applied = this.sql
+        .exec<{ id: string }>(
+          "SELECT id FROM data_migrations WHERE id = ?",
           VERSION_RETENTION_MIGRATION,
         )
         .toArray();
@@ -653,6 +684,8 @@ export class GalleryDO {
         return this.tagCounts();
       case "authors":
         return this.authorCounts();
+      case "rename-owner":
+        return this.renameOwner(body);
       case "update-entry":
         return this.updateEntry(body);
       case "replace-entry":
@@ -848,11 +881,18 @@ export class GalleryDO {
       typeof body.author === "string" && body.author.length > 0
         ? body.author
         : null;
+    const ownerUserId =
+      typeof body.ownerUserId === "string" && body.ownerUserId.length > 0
+        ? body.ownerUserId
+        : null;
     // The viewer id leads the bindings because its sub-select comes first.
     const viewerId = typeof body.viewerId === "string" ? body.viewerId : "";
     const conditions = ["e.status = 'public'"];
     const bindings: (string | number)[] = [];
-    if (author) {
+    if (ownerUserId) {
+      conditions.push("e.owner_user_id = ?");
+      bindings.push(ownerUserId);
+    } else if (author) {
       conditions.push("e.author = ?");
       bindings.push(author);
     }
@@ -889,6 +929,7 @@ export class GalleryDO {
     const rows = this.sql
       .exec<EntrySummaryRow & { likes: number; liked_by_viewer: number }>(
         `SELECT e.id, e.name, e.author, e.description, e.created_at,
+           e.owner_user_id,
            e.schema_version, e.tags, e.netlistable, e.preview_revision,
            e.preview_width, e.preview_height,
            (SELECT COUNT(*) FROM gallery_likes WHERE entry_id = e.id) AS likes,
@@ -1040,6 +1081,60 @@ export class GalleryDO {
     });
   }
 
+  /**
+   * A profile name is a current account label, not versioned circuit content.
+   * Move every materialized byline for the stable owner identity together so
+   * feeds, contributor counts and restorable history cannot disagree.
+   */
+  private renameOwner(body: Record<string, unknown>): Response {
+    const ownerUserId =
+      typeof body.ownerUserId === "string" ? body.ownerUserId.trim() : "";
+    const displayName =
+      typeof body.displayName === "string" ? body.displayName.trim() : "";
+    if (
+      ownerUserId.length === 0 ||
+      displayName.length === 0 ||
+      displayName.length > GALLERY_MAX_AUTHOR_LENGTH
+    ) {
+      return Response.json({ error: "invalid-fields" }, { status: 400 });
+    }
+
+    let entries = 0;
+    let versions = 0;
+    this.state.storage.transactionSync(() => {
+      entries = this.sql
+        .exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM gallery_entries
+           WHERE owner_user_id = ?`,
+          ownerUserId,
+        )
+        .one().count;
+      versions = this.sql
+        .exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM gallery_entry_versions
+           WHERE entry_id IN (
+             SELECT id FROM gallery_entries WHERE owner_user_id = ?
+           )`,
+          ownerUserId,
+        )
+        .one().count;
+      this.sql.exec(
+        `UPDATE gallery_entry_versions SET author = ?
+         WHERE entry_id IN (
+           SELECT id FROM gallery_entries WHERE owner_user_id = ?
+         )`,
+        displayName,
+        ownerUserId,
+      );
+      this.sql.exec(
+        "UPDATE gallery_entries SET author = ? WHERE owner_user_id = ?",
+        displayName,
+        ownerUserId,
+      );
+    });
+    return Response.json({ ownerUserId, displayName, entries, versions });
+  }
+
   private versions(entryId: string): Response {
     const rows = this.sql
       .exec<{
@@ -1150,7 +1245,7 @@ export class GalleryDO {
              preview_height = ?
          WHERE id = ?`,
         version.name,
-        version.author,
+        entry.author,
         version.description,
         restoredProjectText,
         version.svg_text,
@@ -2093,20 +2188,25 @@ export class GalleryDO {
     return Response.json({ tags });
   }
 
-  /** Public bylines ranked by their number of currently visible circuits. */
+  /** Public contributors ranked by visible circuits and keyed by identity. */
   private authorCounts(): Response {
     const rows = this.sql
-      .exec<{ author: string; count: number }>(
-        `SELECT author, COUNT(*) AS count
+      .exec<{
+        author: string;
+        owner_user_id: string | null;
+        count: number;
+      }>(
+        `SELECT MAX(author) AS author, owner_user_id, COUNT(*) AS count
          FROM gallery_entries
          WHERE status = 'public' AND TRIM(author) <> ''
-         GROUP BY author
+         GROUP BY COALESCE(NULLIF(owner_user_id, ''), 'legacy:' || author)
          ORDER BY count DESC, author COLLATE NOCASE ASC, author ASC`,
       )
       .toArray();
     return Response.json({
       authors: rows.map((row) => ({
         author: row.author,
+        ownerUserId: row.owner_user_id,
         count: Number(row.count),
       })),
     });

@@ -4623,6 +4623,7 @@ export function App({
         simulationState={analogSimulationState}
         releaseChannel={releaseChannel}
         projectName={project.name}
+        galleryEntryMetadata={galleryEntryContext}
         projectSchemaVersion={project.schemaVersion}
         projectNameDraft={projectNameDraft}
         hasUnsavedWork={isDirtyWork()}
@@ -5991,6 +5992,14 @@ export function App({
                             }
                           : {}),
                         displayName: selectedDisplayName,
+                        itemName: selectedInstanceLabel
+                          ? flattenRichText(
+                              resolveAnnotationText(
+                                document,
+                                selectedInstanceLabel,
+                              ),
+                            )
+                          : (selectedInstance.reference ?? selectedInstance.id),
                         defaultForeground: styleProfile.foreground,
                         revision: document.revision,
                         referenceVisible:
@@ -6367,6 +6376,8 @@ export function App({
                 selectedAnnotation
                   ? {
                       annotation: selectedAnnotation,
+                      document,
+                      resolver,
                       inheritedColor: selectedAnnotationInheritedTextColor,
                       onApply: (annotation) => {
                         const result = transact([
@@ -6437,6 +6448,7 @@ export function App({
               routeActions={{
                 active: selectedRouteId !== null,
                 document,
+                resolver,
                 route: selectedRoute ?? null,
                 netLabel: selectedRouteNetLabel ?? null,
                 bulkOwnerLabel: selectedMosBulkOwnerLabel,
@@ -6447,6 +6459,8 @@ export function App({
                 onDeleteWire: deleteSelectedRouteConnection,
               }}
               endpointActions={{
+                item: selectedEndpoint,
+                color: styleProfile.foreground,
                 kind: selectedEndpoint
                   ? selectedEndpoint.endpoint.kind === "junction"
                     ? "junction"
