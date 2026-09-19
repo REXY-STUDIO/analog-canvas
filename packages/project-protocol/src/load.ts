@@ -49,6 +49,10 @@ import { upgradeSchema53To54 } from "./transforms/parameter-annotations.js";
 import { upgradeSchema54To55 } from "./transforms/arrow-end-styles.js";
 import { upgradeSchema55To56 } from "./transforms/route-line-style.js";
 import { upgradeSchema56To57 } from "./transforms/power-rail-terminals.js";
+import {
+  CURRENT_PROJECT_FILE_VERSION,
+  decodeProjectFile,
+} from "./owned-project-file.js";
 
 /**
  * One upgrade step per historical version, oldest first: entry N carries a
@@ -165,17 +169,17 @@ export function tryParseProjectWithMetadata(
   }
 
   const sourceSchemaVersion = parsed.schemaVersion as number;
-  const migrated = sourceSchemaVersion !== CURRENT_PROJECT_SCHEMA_VERSION;
+  const migrated = sourceSchemaVersion !== CURRENT_PROJECT_FILE_VERSION;
   if (
     sourceSchemaVersion < OLDEST_SUPPORTED_PROJECT_SCHEMA_VERSION ||
-    sourceSchemaVersion > CURRENT_PROJECT_SCHEMA_VERSION
+    sourceSchemaVersion > CURRENT_PROJECT_FILE_VERSION
   ) {
     return {
       ok: false,
       diagnostics: [
         {
           code: "UNSUPPORTED_SCHEMA_VERSION",
-          message: `Project schemaVersion must be between ${OLDEST_SUPPORTED_PROJECT_SCHEMA_VERSION} and ${CURRENT_PROJECT_SCHEMA_VERSION}`,
+          message: `Project schemaVersion must be between ${OLDEST_SUPPORTED_PROJECT_SCHEMA_VERSION} and ${CURRENT_PROJECT_FILE_VERSION}`,
           path: ["schemaVersion"],
         },
       ],
@@ -184,9 +188,12 @@ export function tryParseProjectWithMetadata(
 
   let current: Record<string, unknown>;
   try {
-    current = parsed;
+    current =
+      sourceSchemaVersion === CURRENT_PROJECT_FILE_VERSION
+        ? decodeProjectFile(parsed)
+        : parsed;
     for (
-      let version = sourceSchemaVersion;
+      let version = current.schemaVersion as number;
       version < CURRENT_PROJECT_SCHEMA_VERSION;
       version += 1
     ) {
@@ -196,6 +203,8 @@ export function tryParseProjectWithMetadata(
         );
     }
   } catch (error) {
+    if (error instanceof ProjectFormatError)
+      return { ok: false, diagnostics: error.diagnostics };
     if (error instanceof ProjectMigrationError) {
       return {
         ok: false,

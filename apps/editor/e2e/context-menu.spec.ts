@@ -1,3 +1,4 @@
+import { parseSavedProject } from "./editor-fixtures";
 import { expect, test, type Page } from "@playwright/test";
 import { createEmptyProject, type CircuitProject } from "@icm/model";
 
@@ -232,7 +233,7 @@ for (const grid of [5, 10]) {
     expect(await labelRects()).toEqual(after);
 
     const bytes = await downloadBytes(page, "File", "Export Project File…");
-    const saved = JSON.parse(bytes.toString("utf8")) as CircuitProject;
+    const saved = parseSavedProject(bytes.toString("utf8")) as CircuitProject;
     expect(
       saved.documents[0]!.instances.map((instance) => instance.placement),
     ).toEqual(document.instances.map((instance) => instance.placement));

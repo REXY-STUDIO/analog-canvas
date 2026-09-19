@@ -2,7 +2,11 @@
 // gallery-do.ts; this module only authenticates and maps API requests.
 
 import { designExtractsNetlist } from "@icm/netlist";
-import { parseProject, serializeProject } from "@icm/project-protocol";
+import {
+  CURRENT_PROJECT_FILE_VERSION,
+  parseProject,
+  serializeProject,
+} from "@icm/project-protocol";
 import { renderDocumentSvg } from "@icm/render-svg";
 import {
   builtInSymbols,
@@ -263,7 +267,7 @@ async function handleCloudProjects(
     ...(expectedRevisionMatch
       ? { expectedRevision: Number(expectedRevisionMatch[1]) }
       : {}),
-    schemaVersion: project.schemaVersion,
+    schemaVersion: CURRENT_PROJECT_FILE_VERSION,
     projectText: serializeProject(project),
     previewSvg,
   });
@@ -421,7 +425,7 @@ async function handleSubmission(
       author,
       description,
       created_at: now.toISOString(),
-      schema_version: project.schemaVersion,
+      schema_version: CURRENT_PROJECT_FILE_VERSION,
       owner_user_id: user.id,
       // Recorded per submission, so an entry stays traceable to the
       // identity that published it even if the account later changes.
@@ -524,7 +528,7 @@ async function handleEntryUpdate(
     description,
     projectText: serializeProject(project),
     svgText: renderPreview(project, projectResolver),
-    schemaVersion: project.schemaVersion,
+    schemaVersion: CURRENT_PROJECT_FILE_VERSION,
     netlistable,
     status: nextStatus,
     tags: wrapTags(sanitizeGalleryTags(body.tags)),

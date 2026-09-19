@@ -22,6 +22,7 @@ import {
   NETLIST_MARK_RULE_VERSION,
 } from "@icm/netlist";
 import {
+  CURRENT_PROJECT_FILE_VERSION,
   parseProject,
   serializeProject,
   upgradeSchema24To25,
@@ -48,10 +49,7 @@ import {
   upgradeSchema45To46WithReport,
   upgradeSchema46To47WithReport,
 } from "@icm/project-protocol";
-import {
-  CURRENT_PROJECT_SCHEMA_VERSION,
-  type CircuitProject,
-} from "@icm/model";
+import { type CircuitProject } from "@icm/model";
 
 import type { AuthNamespaceLike } from "./auth";
 
@@ -1554,7 +1552,7 @@ export class GalleryDO {
     return Response.json({
       format: "analog-canvas-gallery-schema-backup-v1",
       exportedAt: new Date().toISOString(),
-      targetSchemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+      targetSchemaVersion: CURRENT_PROJECT_FILE_VERSION,
       tables: {
         galleryEntries: this.sql
           .exec<Record<string, unknown>>("SELECT * FROM gallery_entries")
@@ -1975,7 +1973,7 @@ export class GalleryDO {
       return Response.json(
         {
           applied: false,
-          targetSchemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+          targetSchemaVersion: CURRENT_PROJECT_FILE_VERSION,
           inventory,
           failures,
         },
@@ -1989,7 +1987,7 @@ export class GalleryDO {
             `UPDATE ${update.table}
              SET project_text = ?, schema_version = ? WHERE id = ?`,
             update.projectText,
-            CURRENT_PROJECT_SCHEMA_VERSION,
+            CURRENT_PROJECT_FILE_VERSION,
             update.id,
           );
         }
@@ -1997,7 +1995,7 @@ export class GalleryDO {
     }
     return Response.json({
       applied: apply,
-      targetSchemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+      targetSchemaVersion: CURRENT_PROJECT_FILE_VERSION,
       inventory,
       records: updates.length + failures.length,
       ready: updates.length,

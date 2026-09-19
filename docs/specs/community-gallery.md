@@ -292,7 +292,7 @@ header buys nothing. Without such a session every admin route answers
 - `GET /api/gallery/maintenance/schema-backup` — download a full-fidelity
   administrator backup of entries, saved versions, and private Cloud Projects.
 - `POST /api/gallery/maintenance/schema-current` — validate or transactionally
-  converge every stored Project to `CURRENT_PROJECT_SCHEMA_VERSION`. The
+  converge every stored Project to `CURRENT_PROJECT_FILE_VERSION`. The
   request body is `{ "apply": false }` for a dry run and `{ "apply": true }`
   to commit only when every record is valid. The response reports
   source-version counts, validation failures, and the current target version;
