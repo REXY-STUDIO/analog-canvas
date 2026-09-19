@@ -193,9 +193,9 @@ import { useProjectCheck } from "./use-project-check";
 import { summarizeVisualDiagnostics } from "../features/selection/selection-inspector-details";
 import {
   type HighlightedNetOrigin,
-  type RoutingGuidanceView,
   useEditorDerivedModel,
 } from "./use-editor-derived-model";
+import type { RoutingGuidanceView } from "../interaction/interaction-state";
 import {
   quickPlaceRequest,
   ShapesPanel,
@@ -837,6 +837,7 @@ export function App({
   const browserAgentFileHost = useMemo(
     () =>
       new BrowserAgentFileHost({
+        transport: simulationTransport,
         getProjectSessionId: () => editorDocumentController.projectSessionId,
         getProject: () => editorDocumentController.project,
         getDocument: (documentId) =>
@@ -848,7 +849,7 @@ export function App({
         dispatchProjectTransaction: (request) =>
           browserAgentHost.dispatchProjectTransaction(request),
       }),
-    [editorDocumentController, projectSessionId],
+    [editorDocumentController, projectSessionId, simulationTransport],
   );
   const projectRunHistory = useMemo(
     () => new ProjectRunHistory(editorDocumentController.project.id),
