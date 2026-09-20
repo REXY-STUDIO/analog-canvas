@@ -1394,7 +1394,7 @@ test("copies and independently deletes Formal Cell Pins", async ({ page }) => {
   );
   await expect(
     page.locator('[data-object-id="instance-label-P1-copy-1"]'),
-  ).toHaveText("Vin2");
+  ).toHaveText("Vout");
   await page.getByTestId("hit-P1").click();
   await page.keyboard.press("Delete");
   await expect(page.getByTestId("hit-P1")).toHaveCount(0);
@@ -1406,13 +1406,13 @@ test("copies and independently deletes Formal Cell Pins", async ({ page }) => {
   }
   await expect(
     page.locator('[data-object-id="instance-label-P1-copy-1"]'),
-  ).toHaveText("Vin2");
+  ).toHaveText("Vout");
   await clickCommand(page, "Netlist", "Check Report…");
   await expect(
     page
       .getByRole("dialog", { name: "Check Report" })
       .getByTestId("netlist-preview"),
-  ).toContainText(".subckt dut VIN2");
+  ).toContainText(".subckt dut VOUT");
 });
 
 test("edits a Cell Pin name and RichText presentation in place", async ({

@@ -5,7 +5,7 @@ import {
 } from "@icm/math-typesetting/profile";
 
 export type RichTextStyle =
-  "italic" | "bold" | "subscript" | "superscript" | "overbar";
+  "italic" | "bold" | "subscript" | "superscript" | "overbar" | "lowercase";
 
 export type RichTextRun =
   | { kind: "text"; value: string }
@@ -57,7 +57,14 @@ function richTextRunSchema(depth: number, allowMath: boolean): z.ZodTypeAny {
     ...leafSchemas,
     z.strictObject({
       kind: z.literal("span"),
-      style: z.enum(["italic", "bold", "subscript", "superscript", "overbar"]),
+      style: z.enum([
+        "italic",
+        "bold",
+        "subscript",
+        "superscript",
+        "overbar",
+        "lowercase",
+      ]),
       children: z
         .array(richTextRunSchema(depth + 1, false))
         .min(1)

@@ -106,7 +106,7 @@ export function renderFractionText(
               defaultBold: at.bold ?? false,
               defaultItalic: at.italic ?? false,
             });
-          const markup = `<text x="${number(x)}" y="${number(baseline)}" text-anchor="start"${!positioned && width > 0 ? ` textLength="${number(width)}" lengthAdjust="spacingAndGlyphs"` : ""} font-size="${number(at.fontSize)}" font-weight="${at.bold ? "bold" : "normal"}" font-style="${at.italic ? "italic" : "normal"}" fill="${at.color}" color="${at.color}" xml:space="preserve">${text}</text>${positioned?.decorations ?? ""}`;
+          const markup = `<text x="${number(x)}" y="${number(baseline)}" text-anchor="start" font-size="${number(at.fontSize)}" font-weight="${at.bold ? "bold" : "normal"}" font-style="${at.italic ? "italic" : "normal"}" fill="${at.color}" color="${at.color}" xml:space="preserve">${text}</text>${positioned?.decorations ?? ""}`;
           // A deterministic advance may position the independent bar and
           // scripts, but it must not scale the glyph outlines. In particular,
           // narrow letters such as `f` were visibly widened when this group

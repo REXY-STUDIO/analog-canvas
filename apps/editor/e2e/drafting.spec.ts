@@ -467,7 +467,9 @@ test("authors one validated formula through the canonical text editor", async ({
   await awaitEditorReady(page);
   await placeText(page);
 
-  await page.getByRole("button", { name: "Insert formula" }).click();
+  const latexButton = page.getByRole("button", { name: "Insert formula" });
+  await expect(latexButton).toHaveText("LaTeX");
+  await latexButton.click();
   await expect(page.getByRole("dialog", { name: "Formula" })).toBeVisible();
   await expect(
     page.locator('math-field[aria-label="Formula editor"]'),
@@ -541,10 +543,12 @@ test("authors one validated formula through the canonical text editor", async ({
   ).toHaveCount(0);
 
   const source = page.getByRole("textbox", { name: "Formula LaTeX source" });
+  await expect(source).toHaveValue("Design note");
+  await expect(source).toBeFocused();
+  const directLatex = String.raw`a+b-c=\left(d\right)`;
+  await source.fill(directLatex);
+  await expect(source).toHaveValue(directLatex);
   await page.locator('math-field[aria-label="Formula editor"]').click();
-  await page.keyboard.type("a+b-c=(d)");
-  await expect(source).toHaveValue(/a\+b-c=/u);
-  await expect(source).toHaveValue(/\\left\(d\\right\)/u);
   await formulaKeyboard.getByRole("button", { name: "Insert Product" }).click();
   await formulaKeyboard
     .getByRole("button", { name: "Insert Derivative" })

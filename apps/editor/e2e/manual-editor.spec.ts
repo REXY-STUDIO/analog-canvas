@@ -1221,12 +1221,48 @@ test("P shortcut starts Cell Pin placement", async ({ page }) => {
   await canvas.click({ position: { x: 320, y: 180 } });
   await expect(page.getByTestId("status")).toContainText("Added Cell Pin Vin");
   await expect(page.getByTestId("hit-P1")).toBeVisible();
+  const inputLabel = page.locator('[data-object-id="instance-label-P1"]');
+  await expect(inputLabel).toHaveText("Vin");
   await expect(
-    page.locator(
-      '[data-object-id="instance-label-P1"] [style*="font-style:italic;font-weight:700"]',
+    inputLabel.locator(
+      '[data-text-run="span"][style*="font-style:italic"][style*="font-weight:400"]',
     ),
-  ).toBeVisible();
+  ).toHaveText("V");
+  await expect(
+    inputLabel.locator(
+      '[data-text-run="subscript"][style*="font-style:normal"][style*="font-weight:400"]',
+    ),
+  ).toHaveText("in");
+
+  await canvas.click({ position: { x: 520, y: 180 } });
+  await expect(page.getByTestId("status")).toContainText("Added Cell Pin Vout");
+  const outputLabel = page.locator('[data-object-id="instance-label-P2"]');
+  await expect(outputLabel).toHaveText("Vout");
+  await expect(outputLabel.locator('[data-text-run="subscript"]')).toHaveText(
+    "out",
+  );
   await page.keyboard.press("Escape");
+
+  await chooseComponent(page, "port-filled");
+  await expect(page.getByTestId("component-placement-preview")).toBeVisible();
+  await canvas.click({ position: { x: 320, y: 260 } });
+  await expect(page.getByTestId("status")).toContainText("Added Cell Pin VB1");
+  await page.keyboard.press("Escape");
+  await chooseComponent(page, "port-filled");
+  await expect(page.getByTestId("component-placement-preview")).toBeVisible();
+  await canvas.click({ position: { x: 520, y: 260 } });
+  await expect(page.getByTestId("status")).toContainText("Added Cell Pin VB2");
+  await page.keyboard.press("Escape");
+  const firstBias = page.locator('[data-object-id="instance-label-P3"]');
+  const secondBias = page.locator('[data-object-id="instance-label-P4"]');
+  await expect(firstBias).toHaveText("Vb1");
+  await expect(secondBias).toHaveText("Vb2");
+  await expect(firstBias.locator('[data-text-run="subscript"]')).toHaveText(
+    "b1",
+  );
+  await expect(secondBias.locator('[data-text-run="subscript"]')).toHaveText(
+    "b2",
+  );
   await openSelectionShelf(page);
   await expect(
     page.getByRole("region", { name: "Routing guidance" }),

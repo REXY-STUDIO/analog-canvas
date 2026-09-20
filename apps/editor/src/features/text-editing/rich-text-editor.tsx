@@ -106,6 +106,9 @@ function toEditableHtml(document: RichTextDocument, disabled = false): string {
         if (run.style === "overbar") {
           return `<span data-rich-text-style="overbar">${children}</span>`;
         }
+        if (run.style === "lowercase") {
+          return `<span data-rich-text-style="lowercase">${children}</span>`;
+        }
         const tag =
           run.style === "italic"
             ? "em"
@@ -282,6 +285,9 @@ function readNode(node: Node, bold = false, italic = false): RichTextRun[] {
   if (node.getAttribute("data-rich-text-style") === "overbar") {
     return [{ kind: "span", style: "overbar", children }];
   }
+  if (node.getAttribute("data-rich-text-style") === "lowercase") {
+    return [{ kind: "span", style: "lowercase", children }];
+  }
   if (tag === "div" || tag === "p") {
     return [...children, { kind: "line-break" }];
   }
@@ -420,7 +426,6 @@ const FormulaMathfield = forwardRef<
         "before-virtual-keyboard-toggle",
         suppressVirtualKeyboard,
       );
-      field.focus();
     };
     void mount();
     return () => {
@@ -573,18 +578,28 @@ export function RichTextEditor({
   const shellRef = useRef<HTMLDivElement>(null);
   const editableRef = useRef<HTMLDivElement>(null);
   const sourceInputRef = useRef<HTMLTextAreaElement>(null);
+  const formulaSourceRef = useRef<HTMLTextAreaElement>(null);
   const formulaMathfieldRef = useRef<FormulaMathfieldHandle>(null);
   const selectionRangeRef = useRef<Range | null>(null);
   const editableInsertionSequenceRef = useRef(0);
   const existingFormula = soleRichTextMathRun(content);
   const [formulaOpen, setFormulaOpen] = useState(false);
   const [formulaDraft, setFormulaDraft] = useState(
-    existingFormula?.latex ?? "",
+    existingFormula?.latex ?? flattenRichText(content),
   );
   const [formulaDisplay, setFormulaDisplay] = useState<"inline" | "block">(
     existingFormula?.display ?? "inline",
   );
   const [formulaError, setFormulaError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!formulaOpen) return;
+    const frame = requestAnimationFrame(() => {
+      formulaSourceRef.current?.focus();
+      formulaSourceRef.current?.select();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [formulaOpen]);
 
   useLayoutEffect(() => {
     const shell = shellRef.current;
@@ -890,7 +905,7 @@ export function RichTextEditor({
     if (disabled) return;
     const selection = window.getSelection()?.toString().trim();
     const formula = soleRichTextMathRun(content);
-    setFormulaDraft(formula?.latex ?? (selection || "V_{OUT}"));
+    setFormulaDraft(formula?.latex ?? (selection || flattenRichText(content)));
     setFormulaDisplay(formula?.display ?? "inline");
     setFormulaError(null);
     setFormulaOpen(true);
@@ -1094,14 +1109,16 @@ export function RichTextEditor({
               </div>
             </details>
             <button
+              className="rich-text-latex-button"
               type="button"
               aria-label="Insert formula"
+              title="Edit the complete label as LaTeX"
               aria-pressed={formulaOpen}
               disabled={disabled}
               onMouseDown={(event) => event.preventDefault()}
               onClick={openFormulaEditor}
             >
-              ƒx
+              LaTeX
             </button>
             <span className="rich-text-toolbar-separator" />
           </>
@@ -1196,8 +1213,8 @@ export function RichTextEditor({
         >
           <div className="rich-text-formula-header">
             <div>
-              <strong>Formula</strong>
-              <span>LaTeX with live preview</span>
+              <strong>LaTeX</strong>
+              <span>Type the source directly; preview updates below</span>
             </div>
             <button
               type="button"
@@ -1211,6 +1228,18 @@ export function RichTextEditor({
             className="rich-text-formula-scroll-region"
             data-testid="formula-scroll-region"
           >
+            <label className="rich-text-formula-source">
+              <span>LaTeX source</span>
+              <textarea
+                ref={formulaSourceRef}
+                autoFocus
+                value={formulaDraft}
+                aria-label="Formula LaTeX source"
+                spellCheck={false}
+                rows={3}
+                onChange={(event) => updateFormulaDraft(event.target.value)}
+              />
+            </label>
             <section className="rich-text-formula-preview">
               <span>Preview</span>
               <FormulaMathfield
@@ -1269,16 +1298,6 @@ export function RichTextEditor({
                 ))}
               </div>
             </details>
-            <label className="rich-text-formula-source">
-              <span>LaTeX source</span>
-              <textarea
-                value={formulaDraft}
-                aria-label="Formula LaTeX source"
-                spellCheck={false}
-                rows={3}
-                onChange={(event) => updateFormulaDraft(event.target.value)}
-              />
-            </label>
             {formulaError ? (
               <div className="rich-text-formula-error" role="alert">
                 {formulaError}

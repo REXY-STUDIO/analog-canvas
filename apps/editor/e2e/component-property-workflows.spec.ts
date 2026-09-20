@@ -1004,8 +1004,8 @@ test("value display projects MOS W/L and passive values beside the reference", a
   // Geometry and the Value display are Properties decisions after placement.
   await page.getByTestId("hit-M1").click();
   await openSelectionShelf(page);
-  await setComponentParameter(page, "w", "2u");
-  await setComponentParameter(page, "l", "180n");
+  await setComponentParameter(page, "w", "41um");
+  await setComponentParameter(page, "l", "80nm");
   await setComponentParameter(page, "m", "4");
   await editComponentPropertyCode(page, (propertyCode) => {
     propertyCode.display.value = true;
@@ -1017,10 +1017,19 @@ test("value display projects MOS W/L and passive values beside the reference", a
   await expect(reference).toContainText("M1");
   // MOS values render as a stacked fraction with engineering units: the
   // numerator and denominator are separate part texts around a fraction bar.
-  await expect(value).toContainText("2u");
-  await expect(value).toContainText("180n");
+  await expect(value).toContainText("41um");
+  await expect(value).toContainText("80nm");
   await expect(value).toContainText("×4");
   await expect(page.locator('[data-role="fraction-bar"]')).toHaveCount(1);
+  await expect(
+    value.locator('[data-role="fraction-numerator"]'),
+  ).not.toHaveAttribute("textLength");
+  await expect(
+    value.locator('[data-role="fraction-denominator"]'),
+  ).not.toHaveAttribute("textLength");
+  await expect(value.locator('text[text-anchor="start"]')).not.toHaveAttribute(
+    "lengthAdjust",
+  );
   const fractionCenters = await value.evaluate((element) => {
     const box = (role: string) => {
       const part = element.querySelector<SVGGraphicsElement>(
@@ -1095,8 +1104,8 @@ test("value display projects MOS W/L and passive values beside the reference", a
   );
   expect(svg).toContain('data-kind="instance-value"');
   expect(svg).toContain('data-role="fraction-bar"');
-  expect(svg).toContain("2u");
-  expect(svg).toContain("180n");
+  expect(svg).toContain("41um");
+  expect(svg).toContain("80nm");
   expect(svg).toContain("×4");
   expect(svg).toContain("33k");
 });

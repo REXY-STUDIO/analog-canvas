@@ -84,6 +84,29 @@ export function plainNameDocument(value: string): RichTextDocument {
   return { runs: [span([{ kind: "text", value }], "bold")] };
 }
 
+/**
+ * Presentation for generated voltage-node names such as Vin, Vout and VB1.
+ *
+ * The electrical name stays ordinary identifier text. Only its visual
+ * projection follows the conventional math spelling: an italic V followed by
+ * a smaller, lowercase upright subscript. Unlike the bold Razavi house labels,
+ * this is deliberately the same weight as ordinary LaTeX math.
+ */
+export function voltageNodeTextDocument(value: string): RichTextDocument {
+  if (value.length === 0) return { runs: [{ kind: "line-break" }] };
+  const head = value.slice(0, 1);
+  const tail = value.slice(1);
+  if (head.toLowerCase() !== "v" || tail.length === 0 || /\s/u.test(value)) {
+    return { runs: [{ kind: "text", value }] };
+  }
+  return {
+    runs: [
+      span([{ kind: "text", value: head }], "italic"),
+      span([span([{ kind: "text", value: tail }], "lowercase")], "subscript"),
+    ],
+  };
+}
+
 /** Construct current-authoring RichText for a conventional semantic label. */
 export function semanticTextDocument(
   value: string,

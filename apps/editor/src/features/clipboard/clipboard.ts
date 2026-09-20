@@ -41,6 +41,7 @@ import {
   rewriteRichTextPlainText,
   routeBends,
   routeEnd,
+  voltageNodeTextDocument,
 } from "@icm/model";
 
 import {
@@ -1428,7 +1429,11 @@ export function proposePaste(
       clipboard.intent === "clone-selection" && copiedPort
         ? copiedPort.symbolId === "vdd-port"
           ? "VDD"
-          : nextCellPinName(document, reservedPortNames)
+          : nextCellPinName(
+              document,
+              reservedPortNames,
+              copiedPort.symbolId === "port-filled" ? "filled" : "hollow",
+            )
         : terminal.name;
     reservedPortNames.add(name.toLowerCase());
     terminalNames.set(terminal.id, name);
@@ -1656,15 +1661,14 @@ export function proposePaste(
       }
       if (
         clipboard.intent === "clone-selection" &&
-        clone.binding?.kind === "cell-terminal-name" &&
-        clone.formatOverride
+        clone.binding?.kind === "cell-terminal-name"
       ) {
         const name = terminalNames.get(clone.binding.terminalId);
-        if (name)
-          clone.formatOverride = rewriteRichTextPlainText(
-            clone.formatOverride,
-            name,
-          );
+        if (name) {
+          clone.formatOverride = clone.formatOverride
+            ? rewriteRichTextPlainText(clone.formatOverride, name)
+            : voltageNodeTextDocument(name);
+        }
       }
       if (
         clone.binding?.kind === "instance-reference" &&

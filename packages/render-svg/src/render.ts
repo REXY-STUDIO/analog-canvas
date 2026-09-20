@@ -152,16 +152,6 @@ function renderStackedFractionAnnotation(
   const denominatorY =
     options.position.y +
     fontSize * partScale * fractionGeometry.denominatorBaselineDropEm;
-  const partLength = (content: RichTextDocument): string => {
-    const width = measureRichTextDocument(content, {
-      ...richTextMetrics(profile),
-      fontSize: partFont,
-      fractionText: true,
-    }).width;
-    return width > 0
-      ? ` textLength="${width}" lengthAdjust="spacingAndGlyphs"`
-      : "";
-  };
   const partStyle = `font-style:normal;font-weight:${profile.typography.mathWeight}`;
   // `fill` paints glyphs; `color` supplies currentColor for nested RichText
   // decorations such as CSS overbars inside a fraction part.
@@ -169,7 +159,7 @@ function renderStackedFractionAnnotation(
     ? ` fill="${options.color}" color="${options.color}"`
     : "";
   const attributes = options.attributes ? ` ${options.attributes}` : "";
-  return `<g${attributes}><text data-role="fraction-numerator" x="${centerX}" y="${numeratorY}" text-anchor="middle" font-size="${partFont}"${partLength(fraction.numerator)}${textColor} style="${partStyle}">${renderRichTextDocument(fraction.numerator, profile, { defaultBold: true, fontSize: partFont })}</text><line data-role="fraction-bar" x1="${centerX - halfWidth}" y1="${barY}" x2="${centerX + halfWidth}" y2="${barY}" stroke="${options.color ?? profile.foreground}" stroke-width="${profile.strokes.annotation}"/><text data-role="fraction-denominator" x="${centerX}" y="${denominatorY}" text-anchor="middle" font-size="${partFont}"${partLength(fraction.denominator)}${textColor} style="${partStyle}">${renderRichTextDocument(fraction.denominator, profile, { defaultBold: true, fontSize: partFont })}</text></g>`;
+  return `<g${attributes}><text data-role="fraction-numerator" x="${centerX}" y="${numeratorY}" text-anchor="middle" font-size="${partFont}"${textColor} style="${partStyle}">${renderRichTextDocument(fraction.numerator, profile, { defaultBold: true, fontSize: partFont })}</text><line data-role="fraction-bar" x1="${centerX - halfWidth}" y1="${barY}" x2="${centerX + halfWidth}" y2="${barY}" stroke="${options.color ?? profile.foreground}" stroke-width="${profile.strokes.annotation}"/><text data-role="fraction-denominator" x="${centerX}" y="${denominatorY}" text-anchor="middle" font-size="${partFont}"${textColor} style="${partStyle}">${renderRichTextDocument(fraction.denominator, profile, { defaultBold: true, fontSize: partFont })}</text></g>`;
 }
 
 function isPositionableFractionCompanion(run: RichTextRun): boolean {
@@ -239,7 +229,7 @@ function renderPositionedFractionAnnotation(
   const renderCompanion = (document: RichTextDocument, x: number): string =>
     document.runs.length === 0
       ? ""
-      : `<text x="${x}" y="${options.position.y}" text-anchor="start" font-size="${options.fontSize}" textLength="${widthOf(document)}" lengthAdjust="spacingAndGlyphs" xml:space="preserve"${textColor}>${renderRichTextDocument(document, options.profile, { lineOriginX: x, fontSize: options.fontSize })}</text>`;
+      : `<text x="${x}" y="${options.position.y}" text-anchor="start" font-size="${options.fontSize}" xml:space="preserve"${textColor}>${renderRichTextDocument(document, options.profile, { lineOriginX: x, fontSize: options.fontSize })}</text>`;
   const fractionX = startX + prefixWidth;
   const fractionMarkup = renderStackedFractionAnnotation(fraction, {
     position: { x: fractionX, y: options.position.y },
