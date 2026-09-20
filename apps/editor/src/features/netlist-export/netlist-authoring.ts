@@ -103,21 +103,27 @@ export function createNewInstance(
 export function nextCellPinName(
   document: SchematicDocument,
   reservedNames: ReadonlySet<string> = new Set(),
+  appearance: "hollow" | "filled" = "hollow",
 ): string {
   const occupied = new Set(
     (document.netlist?.terminals ?? []).map((terminal) =>
       terminal.name.trim().toLowerCase(),
     ),
   );
-  let ordinal = 1;
+  const unavailable = (name: string): boolean =>
+    occupied.has(name.toLowerCase()) || reservedNames.has(name.toLowerCase());
+  if (appearance === "filled") {
+    let ordinal = 1;
+    while (unavailable(`VB${ordinal}`)) ordinal += 1;
+    return `VB${ordinal}`;
+  }
+  let pair = 1;
   while (true) {
-    const name = ordinal === 1 ? "Vin" : `Vin${ordinal}`;
-    if (
-      !occupied.has(name.toLowerCase()) &&
-      !reservedNames.has(name.toLowerCase())
-    )
-      return name;
-    ordinal += 1;
+    for (const base of ["Vin", "Vout"] as const) {
+      const name = pair === 1 ? base : `${base}${pair}`;
+      if (!unavailable(name)) return name;
+    }
+    pair += 1;
   }
 }
 

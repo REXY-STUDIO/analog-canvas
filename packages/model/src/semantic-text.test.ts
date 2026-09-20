@@ -3,6 +3,7 @@ import { flattenRichText } from "./rich-text.js";
 import {
   defaultDraftTextDocument,
   semanticTextDocument,
+  voltageNodeTextDocument,
 } from "./semantic-text.js";
 
 describe("semantic formal-Port text", () => {
@@ -35,6 +36,46 @@ describe("other semantic text remains unchanged", () => {
       style: "subscript",
       children: [{ style: "italic" }],
     });
+  });
+});
+
+describe("generated voltage-node text", () => {
+  it.each([
+    ["Vin", "in"],
+    ["Vout", "out"],
+    ["VB1", "b1"],
+    ["VB2", "b2"],
+  ])("renders %s as an italic V with an upright subscript", (name, suffix) => {
+    const content = voltageNodeTextDocument(name);
+
+    expect(flattenRichText(content)).toBe(name);
+    expect(content).toEqual({
+      runs: [
+        {
+          kind: "span",
+          style: "italic",
+          children: [{ kind: "text", value: "V" }],
+        },
+        {
+          kind: "span",
+          style: "subscript",
+          children: [
+            {
+              kind: "span",
+              style: "lowercase",
+              children: [
+                {
+                  kind: "text",
+                  value: name.slice(1),
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    expect(suffix).toBe(name.slice(1).toLowerCase());
+    expect(JSON.stringify(content)).not.toContain('"bold"');
   });
 });
 

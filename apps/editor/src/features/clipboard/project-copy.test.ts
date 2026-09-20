@@ -309,7 +309,7 @@ describe("one Project copy path", () => {
     );
     expect(terminals.map((terminal) => terminal.name).sort()).toEqual([
       "Vin",
-      "Vin2",
+      "Vout",
     ]);
     expect(new Set(terminals.map((terminal) => terminal.netId)).size).toBe(2);
     expect(terminals.every((terminal) => terminal.netId !== "shared")).toBe(

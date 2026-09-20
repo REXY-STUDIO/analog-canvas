@@ -27,7 +27,7 @@ import type {
   Point,
   SchematicDocument,
 } from "@icm/model";
-import { defaultDraftTextDocument } from "@icm/model";
+import { defaultDraftTextDocument, voltageNodeTextDocument } from "@icm/model";
 import { hierarchicalSymbolId, type SymbolResolver } from "@icm/symbols";
 
 import type { ComponentInsertRequest } from "./component-insert-request";
@@ -465,12 +465,22 @@ export function useComponentPlacement(options: UseComponentPlacementOptions) {
         )
       : undefined;
     const connectedName = connectedLogicalNet?.name?.trim();
-    const formalName =
-      (placementRequest.kind === "cell-pin"
+    const requestedName =
+      placementRequest.kind === "cell-pin"
         ? placementRequest.portName?.trim()
-        : undefined) ||
+        : undefined;
+    const usesGeneratedVoltageName =
+      !supply && !requestedName && !connectedName;
+    const formalName =
+      requestedName ||
       connectedName ||
-      (supply ? "VDD" : nextCellPinName(options.document));
+      (supply
+        ? "VDD"
+        : nextCellPinName(
+            options.document,
+            new Set(),
+            symbolId === "port-filled" ? "filled" : "hollow",
+          ));
     const baseNetId = `net-cell-pin-${id.toLowerCase()}`;
     let netId = contact.netId ?? baseNetId;
     let netSuffix = 2;
@@ -532,7 +542,14 @@ export function useComponentPlacement(options: UseComponentPlacementOptions) {
             options.styleProfile,
             { formalTerminalId: terminalId },
           );
-    const annotation = annotations[0] ? { ...annotations[0] } : undefined;
+    const annotation = annotations[0]
+      ? {
+          ...annotations[0],
+          ...(usesGeneratedVoltageName
+            ? { formatOverride: voltageNodeTextDocument(formalName) }
+            : {}),
+        }
+      : undefined;
     const committed = options.transactProject(
       "place-cell-pin",
       planCreateCellPin(options.project, options.document.id, {

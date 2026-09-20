@@ -9,6 +9,7 @@ import {
   createEmptyDocument,
   flattenRichText,
   semanticTextDocument,
+  voltageNodeTextDocument,
 } from "@icm/model";
 import { buildSvgScene } from "@icm/render-svg";
 import { builtInSymbols, InMemorySymbolResolver } from "@icm/symbols";
@@ -457,23 +458,25 @@ describe("schematic clipboard", () => {
       interfaceInstanceIds: ["P1"],
     });
     expect(copiedTerminal).toMatchObject({
-      name: "Vin2",
+      name: "Vout",
       direction: "input",
       interfaceInstanceIds: ["P1-copy-1"],
     });
     expect(copiedTerminal?.id).not.toBe(originalTerminal?.id);
     expect(copiedTerminal?.netId).not.toBe(originalTerminal?.netId);
     expect(result.document.nets).toHaveLength(2);
-    expect(
-      result.document.annotations.find(
-        (annotation) =>
-          annotation.anchor.kind === "object" &&
-          annotation.anchor.objectId === "P1-copy-1",
-      )?.binding,
-    ).toEqual({
+    const copiedAnnotation = result.document.annotations.find(
+      (annotation) =>
+        annotation.anchor.kind === "object" &&
+        annotation.anchor.objectId === "P1-copy-1",
+    );
+    expect(copiedAnnotation?.binding).toEqual({
       kind: "cell-terminal-name",
       terminalId: copiedTerminal?.id,
     });
+    expect(copiedAnnotation?.formatOverride).toEqual(
+      voltageNodeTextDocument("Vout"),
+    );
 
     const rename = executeTransaction(
       result.document,
@@ -2485,7 +2488,7 @@ describe("a copy stands on its own", () => {
       secondResult.document.netlist?.terminals.find((terminal) =>
         terminal.interfaceInstanceIds.includes(secondCopyId),
       )?.name,
-    ).toBe("Vin2");
+    ).toBe("Vout");
   });
 
   it("keeps a copied drafting snapshot as one layout group", () => {

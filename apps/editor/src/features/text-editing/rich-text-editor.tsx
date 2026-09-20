@@ -106,6 +106,9 @@ function toEditableHtml(document: RichTextDocument, disabled = false): string {
         if (run.style === "overbar") {
           return `<span data-rich-text-style="overbar">${children}</span>`;
         }
+        if (run.style === "lowercase") {
+          return `<span data-rich-text-style="lowercase">${children}</span>`;
+        }
         const tag =
           run.style === "italic"
             ? "em"
@@ -281,6 +284,9 @@ function readNode(node: Node, bold = false, italic = false): RichTextRun[] {
   }
   if (node.getAttribute("data-rich-text-style") === "overbar") {
     return [{ kind: "span", style: "overbar", children }];
+  }
+  if (node.getAttribute("data-rich-text-style") === "lowercase") {
+    return [{ kind: "span", style: "lowercase", children }];
   }
   if (tag === "div" || tag === "p") {
     return [...children, { kind: "line-break" }];

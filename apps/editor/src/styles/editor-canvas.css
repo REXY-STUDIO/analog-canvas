@@ -697,6 +697,16 @@
   background: var(--icm-accent-tint);
 }
 
+.rich-text-floating-toolbar .rich-text-latex-button {
+  min-width: 3.2rem;
+  font-family: "Google Sans Code Variable", monospace;
+  font-size: var(--icm-font-xs);
+}
+
+.rich-text-editor [data-rich-text-style="lowercase"] {
+  text-transform: lowercase;
+}
+
 .rich-text-floating-toolbar button[aria-label="Decrease text size"] {
   margin-left: auto;
 }

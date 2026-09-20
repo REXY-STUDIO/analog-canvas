@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { semanticTextDocument } from "@icm/model";
+import { semanticTextDocument, voltageNodeTextDocument } from "@icm/model";
 
 import { schematicTextFontSize } from "./schematic-text.js";
 import { renderRichTextDocument } from "./rich-text.js";
@@ -55,6 +55,17 @@ describe("Razavi schematic typography", () => {
     expect(rendered).toContain(
       '<tspan data-text-run="span" style="font-style:normal;font-weight:700">in</tspan>',
     );
+  });
+
+  it("lowercases only the visual suffix of a generated voltage name", () => {
+    const rendered = renderRichTextDocument(
+      voltageNodeTextDocument("VB12"),
+      razaviTextbookProfile,
+    );
+
+    expect(rendered).toContain('data-text-run="subscript"');
+    expect(rendered).toContain(">b12</tspan>");
+    expect(rendered).not.toContain(">B12</tspan>");
   });
 
   it("keeps a default Net Label bold italic without an implicit subscript", () => {
