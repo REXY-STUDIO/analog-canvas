@@ -829,10 +829,20 @@ test("constructs VDD as a drawn dotless power rail", async ({ page }) => {
   await expect(page.getByTestId("hit-VDD1")).toHaveCount(0);
   await expect(canvas.locator('[data-symbol-id="vdd"]')).toHaveCount(0);
   const powerLabel = canvas.locator('[data-kind="power-label"]');
-  await expect(powerLabel).toHaveText("Vdd");
+  await expect(powerLabel).toHaveText("VDD");
   await expect(powerLabel.locator('[data-text-run="subscript"]')).toHaveText(
-    "dd",
+    "DD",
   );
+  await expect(
+    powerLabel.locator(
+      '[data-text-run="span"][style*="font-style:italic"][style*="font-weight:700"]',
+    ),
+  ).toHaveText("V");
+  await expect(
+    powerLabel.locator(
+      '[data-text-run="subscript"] [data-text-run="span"][style*="font-style:normal"][style*="font-weight:700"]',
+    ),
+  ).toHaveText("DD");
   await expect(page.getByTestId("component-input-plane")).toHaveCount(0);
 
   await page.keyboard.press("Delete");
@@ -1229,12 +1239,12 @@ test("P shortcut starts Cell Pin placement", async ({ page }) => {
   await expect(inputLabel).toHaveText("Vin");
   await expect(
     inputLabel.locator(
-      '[data-text-run="span"][style*="font-style:italic"][style*="font-weight:400"]',
+      '[data-text-run="span"][style*="font-style:italic"][style*="font-weight:700"]',
     ),
   ).toHaveText("V");
   await expect(
     inputLabel.locator(
-      '[data-text-run="subscript"][style*="font-style:normal"][style*="font-weight:400"]',
+      '[data-text-run="subscript"] [data-text-run="span"][style*="font-style:normal"][style*="font-weight:700"]',
     ),
   ).toHaveText("in");
 
@@ -1259,13 +1269,13 @@ test("P shortcut starts Cell Pin placement", async ({ page }) => {
   await page.keyboard.press("Escape");
   const firstBias = page.locator('[data-object-id="instance-label-P3"]');
   const secondBias = page.locator('[data-object-id="instance-label-P4"]');
-  await expect(firstBias).toHaveText("Vb1");
-  await expect(secondBias).toHaveText("Vb2");
+  await expect(firstBias).toHaveText("VB1");
+  await expect(secondBias).toHaveText("VB2");
   await expect(firstBias.locator('[data-text-run="subscript"]')).toHaveText(
-    "b1",
+    "B1",
   );
   await expect(secondBias.locator('[data-text-run="subscript"]')).toHaveText(
-    "b2",
+    "B2",
   );
   await openSelectionShelf(page);
   await expect(
