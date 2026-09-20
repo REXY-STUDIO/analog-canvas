@@ -12,13 +12,14 @@ import {
   serializeProject,
   tryParseProjectWithMetadata,
   CURRENT_PROJECT_FILE_VERSION,
+  canonicalConnectionIndexes,
 } from "./index.js";
 import { planProjectCodeCommit } from "../../../apps/editor/src/features/project-code/project-code.js";
 
 const fixture = () =>
   parseProject(
     readFileSync(
-      "fixtures/projects/phase-5-dense-analog/project.icproj.json",
+      "fixtures/projects/differential-stage/project.icproj.json",
       "utf8",
     ),
   );
@@ -28,7 +29,9 @@ describe("instance-owned portable source", () => {
     const before = withProjectComponentDefinitions(fixture());
     const encoded = serializeProject(before);
     const loaded = parseProject(encoded);
-    expect(loaded).toEqual(before);
+    expect(canonicalConnectionIndexes(loaded)).toEqual(
+      canonicalConnectionIndexes(before),
+    );
     expect(JSON.parse(encoded).schemaVersion).toBe(
       CURRENT_PROJECT_FILE_VERSION,
     );
@@ -98,7 +101,7 @@ describe("instance-owned portable source", () => {
       before.documents[0]!.annotations,
     );
     expect(commit.project.documents[0]!.nets).toEqual(
-      before.documents[0]!.nets,
+      canonicalConnectionIndexes(before).documents[0]!.nets,
     );
   });
 
@@ -172,19 +175,21 @@ describe("instance-owned portable source", () => {
     });
   });
 
-  it("uses the same explicit terminal pairs for membership and wire endpoints", () => {
-    const before = fixture();
-    const source = JSON.parse(serializeProject(before));
-    expect(source.documents[0].nets[0].terminals).toEqual(
-      before.documents[0]!.nets[0]!.terminals.map((terminal) => [
-        terminal.instanceId,
-        terminal.pinName,
-      ]),
+  it("stores network identity anchors without a second editable membership index", () => {
+    const source = JSON.parse(serializeProject(fixture()));
+    const document = source.documents[0];
+    expect(
+      document.nets.every((n: any) => !Object.hasOwn(n, "terminals")),
+    ).toBe(true);
+    expect(document.routes.every((r: any) => !Object.hasOwn(r, "netId"))).toBe(
+      true,
     );
-    source.documents[0].nets[0].terminals[0] = ["incomplete"];
+    expect(
+      document.junctions.every((j: any) => !Object.hasOwn(j, "netId")),
+    ).toBe(true);
+    document.nets[0].terminals = [["incomplete"]];
     expect(tryParseProjectWithMetadata(JSON.stringify(source))).toMatchObject({
       ok: false,
-      diagnostics: [{ path: ["documents", 0, "nets", 0, "terminals", 0] }],
     });
   });
 

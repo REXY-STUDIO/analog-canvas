@@ -188,10 +188,7 @@ export function tryParseProjectWithMetadata(
 
   let current: Record<string, unknown>;
   try {
-    current =
-      sourceSchemaVersion === CURRENT_PROJECT_FILE_VERSION
-        ? decodeProjectFile(parsed)
-        : parsed;
+    current = sourceSchemaVersion >= 59 ? decodeProjectFile(parsed) : parsed;
     for (
       let version = current.schemaVersion as number;
       version < CURRENT_PROJECT_SCHEMA_VERSION;

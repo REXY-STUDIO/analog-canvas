@@ -7,6 +7,7 @@ import {
   parseProject,
   serializeProject,
   CURRENT_PROJECT_FILE_VERSION,
+  canonicalConnectionIndexes,
 } from "@icm/project-protocol";
 import {
   withProjectComponentDefinitions,
@@ -21,7 +22,10 @@ export function convertProjectText(original) {
   const after = parseProject(text);
   // Compare the complete authored model, not a drawing-code hash. This includes
   // invisible instances, raw parameters, routes, labels and simulation settings.
-  deepStrictEqual(after, before);
+  deepStrictEqual(
+    canonicalConnectionIndexes(after),
+    canonicalConnectionIndexes(before),
+  );
   if (serializeProject(after) !== text)
     throw new Error("Conversion is not idempotent");
   const symbols = createProjectSymbolResolver(before, []);
@@ -47,7 +51,7 @@ export function convertProjectText(original) {
       // Also report original sizes: older files may not have embedded artwork.
       sourceLines: JSON.stringify(source, null, 2).split("\n").length,
       beforeLines: JSON.stringify(before, null, 2).split("\n").length,
-      afterLines: JSON.stringify(target, null, 2).split("\n").length,
+      afterLines: text.trimEnd().split("\n").length,
       sourceBytes: Buffer.byteLength(JSON.stringify(source)),
       beforeBytes: Buffer.byteLength(JSON.stringify(before)),
       afterBytes: Buffer.byteLength(JSON.stringify(target)),

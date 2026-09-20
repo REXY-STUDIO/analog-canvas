@@ -2,17 +2,17 @@
 
 Status: `accepted`
 
-Portable file schema: `59`; normalized editor model schema: `58`.
+Portable file schema: `60`; normalized editor model schema: `58`.
 
 Primary owner: `packages/project-protocol` (portable source and codec).
 `packages/model` validates the normalized editor indexes used by rendering,
 connectivity and transactions. The normalized indexes are decoded working data;
-serialization always writes the one schema-59 authoring representation.
+serialization always writes the one schema-60 authoring representation.
 
 An `.icproj.json` file contains a complete Project. The public `parseProject`
-boundary reads file schemas 24 through 59. Historical schemas pass through the
-existing explicit upgrades; schema 59 decodes through the lossless owned-object
-codec. Both return the same validated editor model. File/envelope metadata must
+boundary reads file schemas 24 through 60. Historical schemas pass through the
+existing explicit upgrades; schemas 59 and 60 decode through the owned-object codec. Schema 60 derives
+network membership from connection facts. Both return the same validated editor model. File/envelope metadata must
 use `CURRENT_PROJECT_FILE_VERSION`, not the internal model version.
 
 ## Instance-owned source
@@ -44,15 +44,42 @@ inheritance without discarding resulting values. Absence of instance color
 inherits the Document style; `color: "auto"` records an explicit empty paint
 override. Empty label collections may be omitted.
 
-Nets remain circuit-level relationships shared by devices, with one terminal
-membership authority. Each terminal is an explicit `[instanceId, pinName]` pair,
-the same pair used by route endpoints. Membership is not duplicated inside each device.
-Route starts/endpoints use `{ "terminal": ["M1", "D"] }` or
-`{ "junction": "J1" }`. A bend leg records `id`, `bend`, `coordinate` and
-`mode` directly; the final leg records `id`, one endpoint and `mode`. Junctions
-use `coordinate`. All route, leg and bend identities, leg order, modes and
-geometry remain exact. Component definitions, hierarchy, source provenance,
-drafting, constraints and simulation files retain their full existing data.
+## One connection source
+
+Routes contain only endpoint references and geometry; they never contain a
+`netId`. Junctions contain geometry without network membership. `nets` is an
+identity/metadata directory: `{ "id": "signal", "at": { "terminal": ["M1", "D"] } }`
+keeps a stable name for the connected component containing that anchor. It
+cannot join disconnected wires. An empty metadata-only network uses `at: null`.
+
+`connections.contacts` contains explicit endpoint contacts absent from the
+route graph. They conduct only while the endpoints remain coincident.
+`connections.unrouted` contains intentional links without drawn wires, such as
+unrouted imported connections. Each link is an array of terminal/junction
+endpoints. Interior wire crossings alone do not imply a connection. Net labels,
+Cell terminals and power claims keep their existing explicit logical semantics;
+visual text placement never silently rewires a historical label.
+
+The shared connection graph computes connected components after all wire facts
+are known. Runtime `nets.terminals` and route/junction `netId` are derived
+indexes, never a second editable source. Adding, deleting or repointing routes
+in Project Code does not require editing membership. Splits allocate stable
+unused IDs; merged identities retarget their metadata. Direct Project Code
+commits and Agent/file replacement use this same reader. Runtime terminal-array
+order is canonical, not authored information.
+
+Endpoints use `{ "terminal": ["M1", "D"] }` or `{ "junction": "J1" }`.
+A single straight route has `start`, `end`, and `legId`. A multi-leg route has
+`start` and `legs`; a bend records `id`, `bend`, `coordinate` and optional `mode`.
+The two forms cannot be mixed. `defaults.routeLeg.mode` is explicit in the file.
+Every route/leg/bend ID, leg order and mode survives conversion.
+
+`defaults.instancesByType` stores complete shared parameter, target, color and
+variant values for repeated device classes. Instance overrides replace whole
+values without hidden merges. Styled RichText runs use strings and ordered
+`styles` arrays instead of one wrapper per style; fractions and formula source
+remain explicit. Symbol primitive points use coordinate pairs. All shortcuts
+expand to the same complete model, with no external defaults or compressed data.
 
 The reader rejects mixed legacy/current field names, conflicting endpoints,
 unknown fields and missing used component definitions. It does not delete
@@ -68,8 +95,9 @@ are built. It never contacts the service or overwrites its input. For every
 record it compares the complete decoded model, exact rendered SVG and netlist
 analysis before/after, and checks save/load idempotence. Existing electrical
 errors remain errors; this is a structural migration, not circuit repair.
-Statistics use the same ordinary JSON pretty-printer on both sides to separate
-structural changes from whitespace. Project Code keeps complete objects in
+Statistics record expanded source/model line counts and the actual editable
+output line count, as well as JSON payload bytes. Model equality ignores only
+the derived terminal-index ordering. Project Code keeps complete objects in
 blocks with descriptive keys; only short property values and coordinate or
 terminal pairs stay on one line. It never stores compressed or encoded source.
 
@@ -91,7 +119,7 @@ atomic database snapshot. Separate local and private remote copies are retained.
 
 ## Included component definitions
 
-Schemas 58 and 59 save each referenced Symbol once in `componentDefinitions`.
+Schemas 58 through 60 save each referenced Symbol once in `componentDefinitions`.
 Portable `Instance.type` (decoded as `Instance.symbolId`) and drafting
 `floating-symbol.symbolId` reference these local classes. Each class contains
 the complete Symbol geometry, pins,
@@ -196,7 +224,8 @@ sources of truth.
   terminal `P`. A `vdd-port` Instance may use the same formal-terminal protocol
   or, mutually exclusively, own a Global VDD name claim. Their connectivity is
   stored in `Net.terminals` and ordinary terminal Route endpoints.
-- Base `Net.terminals` is the physical membership authority.
+- Base `Net.terminals` is a derived physical membership index. Connection facts
+  in portable source are authoritative.
 - `Document.connectivityEvidence` records owner-addressed name claims, explicit
   imported global declarations, non-electrical source-name hints, and
   SPICE-source assertions for one Base Net at a time. The shared Logical-Net
@@ -250,9 +279,9 @@ sources of truth.
 ## Read and write
 
 ```text
-import text -> parse JSON -> require Project file schema 24 through 59
--> migrate old files or decode 59 -> strict model validation -> install unbound
-export -> validate -> encode file schema 59 -> readable canonical JSON -> download
+import text -> parse JSON -> require Project file schema 24 through 60
+-> migrate old files or decode 59/60 -> strict model validation -> install unbound
+export -> validate -> encode file schema 60 -> readable canonical JSON -> download
 ```
 
 An invalid candidate never replaces the current browser Project. File Resource
@@ -275,7 +304,7 @@ open, and recovery remain exact.
 Canonical serialization ends with one newline and is byte-stable across
 serialize/parse/serialize. The current corpus is listed in
 `fixtures/projects/compatibility-corpus.json`; its `current` entries must all be
-already canonical Project file schema 59. Explicit `migrated` witnesses retain their
+already canonical Project file schema 60. Explicit `migrated` witnesses retain their
 source bytes and declared source version; loading and saving must produce a
 byte-stable current Project. The rejected corpus names expected validation
 failures. These are test inventory categories, not new Project fields.

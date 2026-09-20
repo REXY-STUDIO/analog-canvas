@@ -1,11 +1,13 @@
 {
-  "schemaVersion": 59,
+  "schemaVersion": 60,
   "id": "project-minimal",
   "name": "Minimal Project",
   "topDocumentId": "document-main",
   "defaults": {
     "instance": { "mirror": "none", "rotation": 0 },
-    "label": { "alignment": "middle", "locked": false, "rotation": 0 }
+    "instancesByType": {},
+    "label": { "alignment": "middle", "locked": false, "rotation": 0 },
+    "routeLeg": { "mode": "manual" }
   },
   "documents": [
     {
@@ -18,8 +20,9 @@
         "styleProfileId": "razavi-textbook-v1"
       },
       "instances": [],
-      "nets": [],
       "routes": [],
+      "connections": { "contacts": [], "unrouted": [] },
+      "nets": [],
       "junctions": [],
       "annotations": [],
       "drafting": { "objects": [] },
