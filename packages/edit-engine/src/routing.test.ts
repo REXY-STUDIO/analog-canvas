@@ -100,10 +100,7 @@ function addNameClaim(
 function documentFixture() {
   return parseProject(
     readFileSync(
-      resolve(
-        process.cwd(),
-        "fixtures/projects/phase-3-routing/project.icproj.json",
-      ),
+      resolve(process.cwd(), "fixtures/projects/port-nets/project.icproj.json"),
       "utf8",
     ),
   ).documents[0]!;
