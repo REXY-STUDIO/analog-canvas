@@ -978,6 +978,59 @@ test("inherits explicit Port subscripts without guessing from pin names", async 
   );
 });
 
+test("formats every Port label in the current Cell without renaming it", async ({
+  page,
+}) => {
+  await page.goto("/editor");
+  await placeCellPin(page, { name: "IN", position: { x: 280, y: 160 } });
+  await placeCellPin(page, { name: "out", position: { x: 280, y: 240 } });
+  const firstLabel = page.locator('[data-object-id="instance-label-P1"]');
+  const secondLabel = page.locator('[data-object-id="instance-label-P2"]');
+  await expect(firstLabel.locator('[data-text-run="subscript"]')).toHaveCount(
+    0,
+  );
+  await expect(secondLabel.locator('[data-text-run="subscript"]')).toHaveCount(
+    0,
+  );
+
+  await runCellCommand(page, "Manage Cells…");
+  const manager = page.getByRole("dialog", { name: "Cell Manager" });
+  await manager.getByRole("button", { name: "Format all Port labels" }).click();
+  await expect(page.getByTestId("status")).toContainText(
+    "Formatted all Port labels",
+  );
+  await manager.getByLabel("Close Cell Manager").click();
+
+  await expect(firstLabel).toHaveText("In");
+  await expect(firstLabel.locator('[data-text-run="subscript"]')).toHaveText(
+    "n",
+  );
+  await expect(secondLabel).toHaveText("Out");
+  await expect(secondLabel.locator('[data-text-run="subscript"]')).toHaveText(
+    "ut",
+  );
+  const project = parseSavedProject(
+    (await downloadBytes(page, "File", "Export Project File…")).toString(
+      "utf8",
+    ),
+  );
+  expect(
+    project.documents[0]!.netlist?.terminals.map(
+      (port: { name: string }) => port.name,
+    ),
+  ).toEqual(["IN", "out"]);
+
+  await page.keyboard.press("Control+z");
+  await expect(firstLabel).toHaveText("IN");
+  await expect(firstLabel.locator('[data-text-run="subscript"]')).toHaveCount(
+    0,
+  );
+  await expect(secondLabel).toHaveText("out");
+  await expect(secondLabel.locator('[data-text-run="subscript"]')).toHaveCount(
+    0,
+  );
+});
+
 test("places an unreferenced top Cell in an ordinary new Cell", async ({
   page,
 }) => {
@@ -1389,8 +1442,13 @@ test("copies and independently deletes Formal Cell Pins", async ({ page }) => {
 
   await expect(page.getByTestId("hit-P1-copy-1")).toBeVisible();
   await expect(page.locator('[data-object-id="instance-label-P1"]')).toHaveText(
-    "VIN",
+    "Vin",
   );
+  await expect(
+    page
+      .locator('[data-object-id="instance-label-P1"]')
+      .locator('[data-text-run="subscript"]'),
+  ).toHaveText("in");
   await expect(
     page.locator('[data-object-id="instance-label-P1-copy-1"]'),
   ).toHaveText("Vout");
@@ -1799,8 +1857,13 @@ test("same-name Cell Pins stay independent while the final interface groups them
   );
   await page.keyboard.press("Control+Shift+z");
   await expect(page.locator('[data-object-id="instance-label-P2"]')).toHaveText(
-    "vin",
+    "Vin",
   );
+  await expect(
+    page
+      .locator('[data-object-id="instance-label-P2"]')
+      .locator('[data-text-run="subscript"]'),
+  ).toHaveText("in");
   await runCellCommand(page, "Manage Cells…");
   const manager = page.getByRole("dialog", { name: "Cell Manager" });
   await expect(
@@ -1828,10 +1891,7 @@ test("same-name Cell Pins stay independent while the final interface groups them
   };
   const terminals = saved.documents[0]!.netlist.terminals;
   expect(terminals).toHaveLength(2);
-  expect(terminals.map((terminal) => terminal.name.toLowerCase())).toEqual([
-    "vin",
-    "vin",
-  ]);
+  expect(terminals.map((terminal) => terminal.name)).toEqual(["VIN", "vin"]);
   expect(new Set(terminals.map((terminal) => terminal.id)).size).toBe(2);
   expect(new Set(terminals.map((terminal) => terminal.netId)).size).toBe(2);
   expect(terminals.map((terminal) => terminal.direction)).toEqual([
