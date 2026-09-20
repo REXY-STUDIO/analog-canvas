@@ -15,8 +15,19 @@ import {
   expectComponentCodeField,
   readComponentPropertyCode,
   readDocumentStyleCode,
-  recoveryProjectTexts,
+  readRecoveryRecords,
 } from "./editor-fixtures.js";
+
+// These tests assert device behavior against decoded content, independently
+// of the current portable field spelling and structural shorthand.
+async function recoveryProjectTexts(page: import("@playwright/test").Page) {
+  const records = await readRecoveryRecords(page);
+  return records
+    .map((record) =>
+      JSON.stringify(parseSavedProject(record.projectText), null, 2),
+    )
+    .join("\n");
+}
 
 async function openSelectionShelf(page: import("@playwright/test").Page) {
   await revealPropertiesShelf(page);

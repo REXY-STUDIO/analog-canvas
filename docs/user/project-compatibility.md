@@ -1,6 +1,6 @@
 # Project File Compatibility
 
-The current portable Project schema version is `59`. Each instance owns its
+The current portable Project schema version is `60`. Each instance owns its
 parameters, placement, paint and attached labels; the file includes referenced
 component definitions. The normalized editor model remains schema 58. It retains schematic-only
 hierarchy integrity, a Project structural revision, stable formal Cell ports,
