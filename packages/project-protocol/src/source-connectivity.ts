@@ -142,6 +142,14 @@ export function materializeSourceConnectivity(
     graph.add(key);
     identityKeys.set(identity.id, key);
   }
+  // Interface and implicit-body owners keep their endpoint identity even when
+  // a source edit removes the last physical path. These add nodes, never edges.
+  for (const terminal of document.netlist?.terminals ?? [])
+    for (const instanceId of terminal.interfaceInstanceIds)
+      add({ kind: "terminal", instanceId, pinName: "P" });
+  for (const instance of document.instances)
+    if (instance.mosBulkBinding)
+      add({ kind: "terminal", instanceId: instance.id, pinName: "B" });
   for (const junction of document.junctions)
     add({ kind: "junction", junctionId: junction.id });
   for (const route of document.routes)
@@ -230,13 +238,27 @@ export function materializeSourceConnectivity(
     if (annotation.binding?.kind === "net-name")
       annotation.binding.netId = alias(annotation.binding.netId);
   }
-  for (const terminal of document.netlist?.terminals ?? [])
-    terminal.netId = alias(terminal.netId);
+  for (const terminal of document.netlist?.terminals ?? []) {
+    const owner = terminal.interfaceInstanceIds[0];
+    terminal.netId =
+      (owner
+        ? netByEndpoint.get(
+            endpointKey({ kind: "terminal", instanceId: owner, pinName: "P" }),
+          )
+        : undefined) ?? alias(terminal.netId);
+  }
   for (const evidence of document.connectivityEvidence)
     evidence.netId = alias(evidence.netId);
   for (const instance of document.instances)
     if (instance.mosBulkBinding)
-      instance.mosBulkBinding.netId = alias(instance.mosBulkBinding.netId);
+      instance.mosBulkBinding.netId =
+        netByEndpoint.get(
+          endpointKey({
+            kind: "terminal",
+            instanceId: instance.id,
+            pinName: "B",
+          }),
+        ) ?? alias(instance.mosBulkBinding.netId);
   for (const key of ["nmosNetId", "pmosNetId"] as const)
     if (document.mosBulkDefaults?.[key])
       document.mosBulkDefaults[key] = alias(document.mosBulkDefaults[key]);

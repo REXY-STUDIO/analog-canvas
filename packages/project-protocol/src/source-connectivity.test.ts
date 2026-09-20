@@ -68,6 +68,88 @@ describe("connections authored once in Project Code", () => {
     expect(groups(read(saved))).toEqual(["a,c,d"]);
   });
 
+  it("keeps formal port ownership when a source wire is removed", () => {
+    const p = fixture(),
+      d = p.documents[0]!;
+    d.instances.push({ id: "port", symbolId: "port", placement: null });
+    d.nets.push({
+      id: "signal",
+      terminals: [
+        { instanceId: "a", pinName: "1" },
+        { instanceId: "port", pinName: "P" },
+      ],
+    });
+    d.netlist = {
+      name: "dut",
+      formalParameters: [],
+      terminals: [
+        {
+          id: "out",
+          name: "OUT",
+          direction: "output",
+          netId: "signal",
+          interfaceInstanceIds: ["port"],
+        },
+      ],
+    };
+    d.routes.push(
+      createRoutePath({
+        id: "ap",
+        netId: "signal",
+        start: pin("a"),
+        end: { kind: "terminal", instanceId: "port", pinName: "P" },
+        bends: [],
+        modes: ["manual"],
+      }),
+    );
+    const s = source(p);
+    s.documents[0].routes = [];
+    const after = read(s).documents[0]!;
+    const portNet = after.nets.find((n) =>
+      n.terminals.some((t) => t.instanceId === "port"),
+    )!;
+    expect(portNet.terminals).toEqual([{ instanceId: "port", pinName: "P" }]);
+    expect(after.netlist!.terminals[0]!.netId).toBe(portNet.id);
+  });
+
+  it("keeps implicit body ownership on the final network after removing a route", () => {
+    const p = fixture(),
+      d = p.documents[0]!;
+    d.instances.push({
+      id: "mos",
+      symbolId: "nmos",
+      placement: null,
+      mosBulkBinding: { origin: "instance-override", netId: "body" },
+    });
+    d.nets.push({
+      id: "body",
+      terminals: [
+        { instanceId: "a", pinName: "1" },
+        { instanceId: "mos", pinName: "B" },
+      ],
+    });
+    d.routes.push(
+      createRoutePath({
+        id: "ab",
+        netId: "body",
+        start: pin("a"),
+        end: { kind: "terminal", instanceId: "mos", pinName: "B" },
+        bends: [],
+        modes: ["manual"],
+      }),
+    );
+    const s = source(p);
+    s.documents[0].routes = [];
+    const after = read(s).documents[0]!;
+    const bodyNet = after.nets.find((n) =>
+      n.terminals.some((t) => t.instanceId === "mos"),
+    )!;
+    expect(bodyNet.terminals).toEqual([{ instanceId: "mos", pinName: "B" }]);
+    expect(
+      after.instances.find((i) => i.id === "mos")!.mosBulkBinding!.netId,
+    ).toBe(bodyNet.id);
+  });
+
   it("does not connect paths merely because they cross", () => {
     const s = source();
     s.documents[0].instances[1].coordinate = [100, 100];
