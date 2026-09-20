@@ -721,6 +721,8 @@ export class GalleryDO {
         );
       case "schema-backup":
         return this.schemaBackup(body);
+      case "gallery-project-format":
+        return this.galleryProjectFormat(body);
       case "schema-converge":
         return this.schemaConverge(body.apply === true);
       case "schema-restore":
@@ -1695,6 +1697,85 @@ export class GalleryDO {
    * phase is one Durable Object transaction, so a failed record cannot leave
    * the three storage surfaces at mixed schema versions.
    */
+  /** Bounded Gallery-only conversion. Never touch history retention or row metadata. */
+  private galleryProjectFormat(body: Record<string, unknown>): Response {
+    const tables = {
+      galleryEntries: "gallery_entries",
+      galleryEntryVersions: "gallery_entry_versions",
+    } as const;
+    if (
+      typeof body.table !== "string" ||
+      !Object.hasOwn(tables, body.table) ||
+      typeof body.id !== "string" ||
+      !body.id ||
+      typeof body.originalProjectText !== "string" ||
+      typeof body.projectText !== "string" ||
+      Object.keys(body).some(
+        (key) =>
+          !["table", "id", "originalProjectText", "projectText"].includes(key),
+      ) ||
+      new TextEncoder().encode(body.projectText).length >
+        GALLERY_MAX_PROJECT_BYTES ||
+      new TextEncoder().encode(body.originalProjectText).length >
+        GALLERY_MAX_PROJECT_BYTES
+    )
+      return Response.json({ error: "invalid-request" }, { status: 400 });
+    const table = tables[body.table as keyof typeof tables];
+    const row = this.sql
+      .exec<StoredProjectRow>(
+        `SELECT id, schema_version, project_text FROM ${table} WHERE id = ?`,
+        body.id,
+      )
+      .toArray()[0];
+    if (!row) return Response.json({ error: "not-found" }, { status: 404 });
+    if (
+      row.project_text === body.projectText &&
+      row.schema_version === CURRENT_PROJECT_FILE_VERSION
+    )
+      return Response.json({
+        id: row.id,
+        changed: false,
+        schemaVersion: CURRENT_PROJECT_FILE_VERSION,
+      });
+    if (row.project_text !== body.originalProjectText)
+      return Response.json(
+        { error: "concurrent-change", id: row.id },
+        { status: 409 },
+      );
+    try {
+      // Independently reproduce the offline conversion. Clients cannot use this
+      // maintenance operation to alter circuit content or submit arbitrary JSON.
+      const expected = serializeProject(parseProject(row.project_text));
+      if (
+        expected !== body.projectText ||
+        serializeProject(parseProject(expected)) !== expected
+      )
+        return Response.json({ error: "conversion-mismatch" }, { status: 422 });
+    } catch (error) {
+      return Response.json(
+        {
+          error: "invalid-project",
+          message: error instanceof Error ? error.message : String(error),
+        },
+        { status: 422 },
+      );
+    }
+    // Synchronous DO operation: no await between compare and update. The SQL
+    // predicate also protects against future refactors introducing an await.
+    this.sql.exec(
+      `UPDATE ${table} SET project_text = ?, schema_version = ? WHERE id = ? AND project_text = ?`,
+      body.projectText,
+      CURRENT_PROJECT_FILE_VERSION,
+      body.id,
+      body.originalProjectText,
+    );
+    return Response.json({
+      id: row.id,
+      changed: true,
+      schemaVersion: CURRENT_PROJECT_FILE_VERSION,
+    });
+  }
+
   private schemaConverge(apply: boolean): Response {
     const sources = [
       {

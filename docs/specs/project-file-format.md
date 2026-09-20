@@ -312,3 +312,26 @@ failures. These are test inventory categories, not new Project fields.
 Viewport, selection, undo history, canvas overlays, Agent credentials,
 recovery envelopes, generated renders, and derived diagnostics are not part of
 the Project file.
+
+## Bounded Gallery migration
+
+`node scripts/prepare-gallery-format-migration.mjs GALLERY_BACKUP NEW_DIRECTORY`
+verifies the Gallery-only backup using the lossless converter and creates one
+request file per current/historical row plus the complete expected readback.
+Keep this sensitive operational output outside Git. Refresh both the local and
+private remote backup before applying requests after compatible code is deployed.
+
+The administrator-only, same-origin `POST /api/gallery/maintenance/project-format`
+accepts `{table, id, originalProjectText, projectText}` for `galleryEntries` or
+`galleryEntryVersions`. It compares original text literally and independently
+reproduces the conversion. A concurrent author edit returns 409; back up and
+reconvert the new row instead of overwriting it. Already-converted rows are
+idempotent. Each synchronous write replaces only `project_text` and
+`schema_version`, preserving previews, timestamps, attribution, moderation,
+likes and retained version identities. Private Cloud Projects are never accepted.
+
+Read back all affected rows and compare against the expected backup, including
+all other columns, before declaring migration complete. A worker rollback does
+not reverse database writes: use the retained original rows and a separately
+reviewed, equally bounded recovery operation if data restoration is needed.
+Do not invoke the legacy whole-store restore on a Gallery-only backup.

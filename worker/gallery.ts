@@ -683,6 +683,29 @@ export async function routeGalleryRequest(
   if (
     segments.length === 2 &&
     segments[0] === "maintenance" &&
+    segments[1] === "project-format" &&
+    request.method === "POST"
+  ) {
+    if (!sameOrigin(request))
+      return Response.json({ error: "forbidden" }, { status: 403 });
+    if (!(await isAdmin(request, env)))
+      return Response.json({ error: "unauthorized" }, { status: 401 });
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== "object" || Array.isArray(body))
+      return Response.json({ error: "invalid-request" }, { status: 400 });
+    const { status, payload } = await callGallery(
+      env,
+      "gallery-project-format",
+      body,
+    );
+    return Response.json(payload, {
+      status,
+      headers: { "cache-control": "no-store" },
+    });
+  }
+  if (
+    segments.length === 2 &&
+    segments[0] === "maintenance" &&
     segments[1] === "schema-current" &&
     request.method === "POST"
   ) {

@@ -132,7 +132,7 @@ function projectText(name = "Fixture"): string {
 
 function previousVersionText(): string {
   const raw = JSON.parse(JSON.stringify(parseProject(projectText())));
-  raw.schemaVersion = CURRENT_PROJECT_FILE_VERSION - 1;
+  raw.schemaVersion = CURRENT_PROJECT_SCHEMA_VERSION;
   if (raw.schemaVersion < 50) {
     raw.simulationSetups = raw.simulationFolders;
     delete raw.simulationFolders;
@@ -180,7 +180,7 @@ function previousRouteVersionText(): string {
     locked: false,
   });
   const raw = JSON.parse(JSON.stringify(project)) as any;
-  raw.schemaVersion = CURRENT_PROJECT_FILE_VERSION - 1;
+  raw.schemaVersion = CURRENT_PROJECT_SCHEMA_VERSION;
   if (raw.schemaVersion < 50) {
     raw.simulationSetups = raw.simulationFolders;
     delete raw.simulationFolders;
@@ -3236,7 +3236,7 @@ describe("gallery administration", () => {
         body: JSON.stringify({
           id,
           projectText: previousVersionText(),
-          schemaVersion: CURRENT_PROJECT_FILE_VERSION - 1,
+          schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
           svgText: "<svg/>",
         }),
       },
@@ -3394,7 +3394,7 @@ describe("gallery administration", () => {
         body: JSON.stringify({
           id,
           projectText: previousRouteVersionText(),
-          schemaVersion: CURRENT_PROJECT_FILE_VERSION - 1,
+          schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
           svgText: "<svg/>",
         }),
       },
@@ -3461,13 +3461,13 @@ describe("gallery administration", () => {
       .one().id;
     env.gallerySql.exec(
       "UPDATE gallery_entries SET schema_version = ?, project_text = ? WHERE id = ?",
-      CURRENT_PROJECT_FILE_VERSION - 1,
+      CURRENT_PROJECT_SCHEMA_VERSION,
       previousVersionText(),
       id,
     );
     env.gallerySql.exec(
       "UPDATE gallery_entry_versions SET schema_version = ?, project_text = ? WHERE id = ?",
-      CURRENT_PROJECT_FILE_VERSION - 1,
+      CURRENT_PROJECT_SCHEMA_VERSION,
       previousRouteVersionText(),
       versionId,
     );
@@ -3482,7 +3482,7 @@ describe("gallery administration", () => {
       "2026-08-24T00:00:00.000Z",
       "2026-08-24T00:00:00.000Z",
       1,
-      CURRENT_PROJECT_FILE_VERSION - 1,
+      CURRENT_PROJECT_SCHEMA_VERSION,
       previousRouteVersionText(),
     );
 
@@ -3516,13 +3516,13 @@ describe("gallery administration", () => {
       failures: [],
       inventory: {
         gallery_entries: {
-          [String(CURRENT_PROJECT_FILE_VERSION - 1)]: 1,
+          [String(CURRENT_PROJECT_SCHEMA_VERSION)]: 1,
         },
         gallery_entry_versions: {
-          [String(CURRENT_PROJECT_FILE_VERSION - 1)]: 1,
+          [String(CURRENT_PROJECT_SCHEMA_VERSION)]: 1,
         },
         cloud_projects: {
-          [String(CURRENT_PROJECT_FILE_VERSION - 1)]: 1,
+          [String(CURRENT_PROJECT_SCHEMA_VERSION)]: 1,
         },
       },
       migrationReports: [],
@@ -3534,7 +3534,7 @@ describe("gallery administration", () => {
           id,
         )
         .one().schema_version,
-    ).toBe(CURRENT_PROJECT_FILE_VERSION - 1);
+    ).toBe(CURRENT_PROJECT_SCHEMA_VERSION);
 
     const applied = await route(
       env,
@@ -3571,7 +3571,7 @@ describe("gallery administration", () => {
       const stored = JSON.parse(row.project_text) as any;
       for (const document of stored.documents) {
         for (const net of document.nets) {
-          expect(Object.keys(net).sort()).toEqual(["id", "terminals"]);
+          expect(Object.keys(net).sort()).toEqual(["at", "id"]);
         }
       }
     }
@@ -3607,8 +3607,122 @@ describe("gallery administration", () => {
             `SELECT schema_version FROM ${table}`,
           )
           .one().schema_version,
-      ).toBe(CURRENT_PROJECT_FILE_VERSION - 1);
+      ).toBe(CURRENT_PROJECT_SCHEMA_VERSION);
     }
+  });
+
+  it("migrates one Gallery row with optimistic comparison while preserving all metadata and versions", async () => {
+    const env = environment();
+    const cookie = await adminOf(env);
+    const id = await submitOne(env, "Portable migration", { cookie });
+    await route(
+      env,
+      new Request(`${ORIGIN}/api/gallery/${id}`, {
+        method: "PUT",
+        headers: {
+          ...cookieHeaders(cookie),
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Second",
+          projectText: projectText("Second"),
+        }),
+      }),
+    );
+    env.gallerySql.exec(
+      "INSERT INTO gallery_likes VALUES (?, ?, ?)",
+      id,
+      "visitor",
+      "2026-09-20",
+    );
+    const endpoint = `${ORIGIN}/api/gallery/maintenance/project-format`;
+    const send = (body: unknown, headers = cookieHeaders(cookie)) =>
+      route(
+        env,
+        new Request(endpoint, {
+          method: "POST",
+          headers: { ...headers, "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      );
+    for (const [table, sqlTable] of [
+      ["galleryEntries", "gallery_entries"],
+      ["galleryEntryVersions", "gallery_entry_versions"],
+    ]) {
+      const row = env.gallerySql
+        .exec<Record<string, any>>(`SELECT * FROM ${sqlTable}`)
+        .one();
+      const originalProjectText = JSON.stringify(
+        parseProject(row.project_text),
+      );
+      env.gallerySql.exec(
+        `UPDATE ${sqlTable} SET project_text = ?, schema_version = ? WHERE id = ?`,
+        originalProjectText,
+        CURRENT_PROJECT_SCHEMA_VERSION,
+        row.id,
+      );
+      const before = env.gallerySql
+        .exec<Record<string, any>>(`SELECT * FROM ${sqlTable}`)
+        .one();
+      const projectText = serializeProject(parseProject(originalProjectText));
+      const body = { table, id: row.id, originalProjectText, projectText };
+      expect((await send(body, { Origin: ORIGIN })).status).toBe(401);
+      expect(
+        (
+          await send(body, {
+            ...cookieHeaders(cookie),
+            Origin: "https://untrusted.example",
+          })
+        ).status,
+      ).toBe(403);
+      expect(
+        (await send({ ...body, originalProjectText: "outdated" })).status,
+      ).toBe(409);
+      expect(
+        (
+          await send({
+            ...body,
+            projectText: serializeProject(
+              createEmptyProject("different", "Altered"),
+            ),
+          })
+        ).status,
+      ).toBe(422);
+      expect(env.gallerySql.exec(`SELECT * FROM ${sqlTable}`).one()).toEqual(
+        before,
+      );
+      const migrated = await send(body);
+      expect(migrated.status).toBe(200);
+      expect(await migrated.json()).toMatchObject({
+        changed: true,
+        schemaVersion: CURRENT_PROJECT_FILE_VERSION,
+      });
+      expect(env.gallerySql.exec(`SELECT * FROM ${sqlTable}`).one()).toEqual({
+        ...before,
+        project_text: projectText,
+        schema_version: CURRENT_PROJECT_FILE_VERSION,
+      });
+      expect(await (await send(body)).json()).toMatchObject({ changed: false });
+    }
+    expect(
+      (
+        await send({
+          table: "cloudProjects",
+          id,
+          originalProjectText: "",
+          projectText: "",
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      env.gallerySql.exec("SELECT * FROM gallery_likes").toArray(),
+    ).toEqual([{ entry_id: id, user_id: "visitor", liked_at: "2026-09-20" }]);
+    expect(
+      env.gallerySql.exec("SELECT id FROM gallery_entries").toArray(),
+    ).toHaveLength(1);
+    expect(
+      env.gallerySql.exec("SELECT id FROM gallery_entry_versions").toArray(),
+    ).toHaveLength(1);
   });
 
   it("backs up every raw row through bounded admin-only pages, including likes", async () => {
