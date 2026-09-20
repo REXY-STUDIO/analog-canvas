@@ -129,7 +129,8 @@
       "apps/editor/e2e/recovery-dialog.spec.ts",
       "apps/editor/e2e/recovery-hardening.spec.ts",
       "packages/model/**",
-      "packages/project-protocol/**"
+      "packages/project-protocol/**",
+      "apps/editor/e2e/project-source-format.spec.ts"
     ],
     "gallery": [
       "worker/auth.ts",
@@ -335,7 +336,9 @@
         "test:e2e:local",
         "apps/editor/e2e/user-components.spec.ts"
       ],
-      "ci": { "e2eArgs": ["apps/editor/e2e/user-components.spec.ts"] }
+      "ci": {
+        "e2eArgs": ["apps/editor/e2e/user-components.spec.ts"]
+      }
     },
     {
       "id": "hierarchy-browser",
@@ -347,7 +350,9 @@
         "test:e2e:local",
         "apps/editor/e2e/hierarchy.spec.ts"
       ],
-      "ci": { "e2eArgs": ["apps/editor/e2e/hierarchy.spec.ts"] }
+      "ci": {
+        "e2eArgs": ["apps/editor/e2e/hierarchy.spec.ts"]
+      }
     },
     {
       "id": "project-file-browser",
@@ -364,7 +369,8 @@
           "apps/editor/e2e/auto-fit.spec.ts",
           "apps/editor/e2e/project-file.spec.ts",
           "apps/editor/e2e/recovery-dialog.spec.ts",
-          "apps/editor/e2e/recovery-hardening.spec.ts"
+          "apps/editor/e2e/recovery-hardening.spec.ts",
+          "apps/editor/e2e/project-source-format.spec.ts"
         ]
       }
     },
@@ -374,7 +380,9 @@
       "groups": ["gallery"],
       "description": "Validate Gallery, account, submission, moderation, and workspace workflows.",
       "command": ["pnpm", "test:e2e:local", "apps/editor/e2e/gallery.spec.ts"],
-      "ci": { "e2eArgs": ["apps/editor/e2e/gallery.spec.ts"] }
+      "ci": {
+        "e2eArgs": ["apps/editor/e2e/gallery.spec.ts"]
+      }
     },
     {
       "id": "agent-browser",
@@ -583,7 +591,9 @@
         "test:e2e:local",
         "apps/editor/e2e/wiring-semantics.spec.ts"
       ],
-      "ci": { "e2eArgs": ["apps/editor/e2e/wiring-semantics.spec.ts"] }
+      "ci": {
+        "e2eArgs": ["apps/editor/e2e/wiring-semantics.spec.ts"]
+      }
     },
     {
       "id": "thin-target-hit-browser",
@@ -613,7 +623,9 @@
         "test:e2e:local",
         "apps/editor/e2e/empty-label-ghost.spec.ts"
       ],
-      "ci": { "e2eArgs": ["apps/editor/e2e/empty-label-ghost.spec.ts"] }
+      "ci": {
+        "e2eArgs": ["apps/editor/e2e/empty-label-ghost.spec.ts"]
+      }
     },
     {
       "id": "symbol-body-text-browser",
@@ -625,7 +637,9 @@
         "test:e2e:local",
         "apps/editor/e2e/symbol-body-text.spec.ts"
       ],
-      "ci": { "e2eArgs": ["apps/editor/e2e/symbol-body-text.spec.ts"] }
+      "ci": {
+        "e2eArgs": ["apps/editor/e2e/symbol-body-text.spec.ts"]
+      }
     },
     {
       "id": "release-verification",

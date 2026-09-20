@@ -1,3 +1,4 @@
+import { parseSavedProject } from "./editor-fixtures";
 import { test, expect } from "@playwright/test";
 import { createEmptyProject } from "@icm/model";
 import {
@@ -89,7 +90,7 @@ test("selects an export entry independently of saved Top and edits only that Cel
   await code.fill((await code.innerText()).replace("20k", "30k"));
   await code.press("Enter");
   await expect(entry).toBeEnabled();
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(),
   );
   expect(saved.topDocumentId).toBe(project.topDocumentId);
@@ -145,7 +146,7 @@ test("restores process and device choices, applies defaults and keeps copy/edit/
   expect(
     nonemptyLines(await page.evaluate(() => navigator.clipboard.readText())),
   ).toEqual(nonemptyLines(await code.innerText()));
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -322,7 +323,7 @@ test("opens editable netlist by default, highlights a card, and synchronizes nam
   await code.fill(initial.replace("R1 ", "R_load ").replace("10k", "22k"));
   await code.press("Enter");
   await expect(label(page)).toContainText("R_load");
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -443,7 +444,7 @@ test("opening and reopening Netlist preserves incomplete imported device data", 
   await page.getByTestId("netlist-panel-toggle").click();
   await expect(code).toHaveText("");
   await expect(page.getByTestId("revision")).toHaveText(revision!);
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),

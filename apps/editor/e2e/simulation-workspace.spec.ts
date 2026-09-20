@@ -1,3 +1,4 @@
+import { parseSavedProject } from "./editor-fixtures";
 import { test, expect, type Page, type WebSocketRoute } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { unzipSync } from "fflate";
@@ -1743,7 +1744,7 @@ test("Simulation defaults a new experiment to an ordinary authored Cell", async 
     .getByTestId("schematic-canvas")
     .click({ position: { x: 320, y: 180 } });
   await page.keyboard.press("Escape");
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(),
   );
   const tb = saved.documents.find(
@@ -1819,7 +1820,7 @@ test("Simulation defaults a new experiment to an ordinary authored Cell", async 
     .first()
     .click();
   await expect(page.getByLabel("Analysis examples")).toHaveCount(0);
-  const configured = JSON.parse(
+  const configured = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(),
   );
   expect(

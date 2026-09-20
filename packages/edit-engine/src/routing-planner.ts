@@ -1677,22 +1677,8 @@ export function proposeWireCommit(
           to.routePresentation === "power-rail"
         ? "power-rail"
         : undefined;
-  let netId = from.netId ?? to.netId;
-  if (from.netId && to.netId && from.netId !== to.netId) {
-    netId = from.netId;
-    edits.push({
-      kind: "merge_nets",
-      targetNetId: from.netId,
-      sourceNetId: to.netId,
-    });
-  }
-  if (!netId) netId = ids.newNetId;
-  edits.push({
-    kind: "connect_endpoints",
-    from: from.endpoint,
-    to: to.endpoint,
-    ...(!from.netId && !to.netId ? { newNetId: netId } : {}),
-  });
+  // Only an identity hint; the completed endpoint graph derives membership.
+  const netId = from.netId ?? to.netId ?? ids.newNetId;
   const routeId = ids.routeId;
   const routed = compileWireDraft(
     from,
@@ -1706,10 +1692,16 @@ export function proposeWireCommit(
     draft.routingMode ?? "orthogonal",
     draft.cornerOrder ?? "auto",
   );
-  // Exact endpoint contact is real connectivity but has no conductor length.
-  // Keep the ordinary connect/merge edits above and do not manufacture a
-  // Route whose sole segment begins and ends at the same resolved point.
-  if (routed.points.length < 2) return { routeId, netId, edits };
+  // Direct contact has no path to persist and remains an explicit connection.
+  if (routed.points.length < 2) {
+    edits.push({
+      kind: "connect_endpoints",
+      from: from.endpoint,
+      to: to.endpoint,
+      ...(!from.netId && !to.netId ? { newNetId: netId } : {}),
+    });
+    return { routeId, netId, edits };
+  }
   edits.push({
     kind: "set_route_path",
     route: createRoutePath({
@@ -1916,17 +1908,11 @@ export function proposeWireCommitThroughContacts(
 
     for (const extra of next.extras) {
       edits.push(...extra.source.preludeEdits);
-      if (extra.source.netId && extra.source.netId !== netId) {
-        edits.push({
-          kind: "merge_nets",
-          targetNetId: netId,
-          sourceNetId: extra.source.netId,
-        });
-      }
       edits.push({
         kind: "connect_endpoints",
         from: next.source.endpoint,
         to: extra.source.endpoint,
+        newNetId: ids.newNetId,
       });
     }
   }

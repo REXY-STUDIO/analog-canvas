@@ -1,3 +1,5 @@
+import { serializeProject } from "@icm/project-protocol";
+import { parseSavedProject } from "./editor-fixtures";
 import { expect, test, type Page } from "@playwright/test";
 import {
   awaitEditorReady,
@@ -17,7 +19,7 @@ async function placeResistor(page: Page) {
   await page.keyboard.press("Escape");
 }
 async function projectFile(page: Page) {
-  return JSON.parse(
+  return parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -99,7 +101,7 @@ test("canvas edits one visual annotation without changing the Netlist Reference"
   await page.getByTestId("project-file").setInputFiles({
     name: "visual-annotation.icproj.json",
     mimeType: "application/json",
-    buffer: Buffer.from(JSON.stringify(saved)),
+    buffer: Buffer.from(serializeProject(saved)),
   });
   await expect(page.getByTestId("status")).toContainText(
     "Opened visual-annotation.icproj.json",

@@ -12,11 +12,7 @@ import {
   resolveVisualAnchor,
   runErcChecks,
 } from "@icm/derived";
-import {
-  CURRENT_PROJECT_SCHEMA_VERSION,
-  flattenRichText,
-  readSimulationExperimentConfig,
-} from "@icm/model";
+import { flattenRichText, readSimulationExperimentConfig } from "@icm/model";
 import type { CircuitProject } from "@icm/model";
 import {
   analyzeDesignNetlist,
@@ -24,7 +20,10 @@ import {
   createDesignNetlistExport,
   printSpiceNetlist,
 } from "@icm/netlist";
-import { serializeProject } from "@icm/project-protocol";
+import {
+  serializeProject,
+  CURRENT_PROJECT_FILE_VERSION,
+} from "@icm/project-protocol";
 import { builtInSymbols, createProjectSymbolResolver } from "@icm/symbols";
 import { describe, expect, it } from "vitest";
 import { createTextEditingSession } from "../features/text-editing/text-editing";
@@ -62,7 +61,7 @@ describe("bundled Library Project examples", () => {
     for (const example of libraryProjectExamples) {
       expect(example.name.trim()).not.toBe("");
       expect(serializeProject(example.project)).toContain(
-        `"schemaVersion": ${CURRENT_PROJECT_SCHEMA_VERSION}`,
+        `"schemaVersion": ${CURRENT_PROJECT_FILE_VERSION}`,
       );
       expect(example.project.documents.length).toBeGreaterThanOrEqual(1);
       expect(

@@ -1,3 +1,4 @@
+import { parseSavedProject } from "./editor-fixtures";
 import type { SchematicDocument } from "@icm/model";
 import { razaviProductSymbols } from "@icm/symbols";
 import { expect, test } from "@playwright/test";
@@ -122,7 +123,7 @@ test("live JSON properties update controls immediately and round-trip raw parame
   const source = await readComponentPropertyCode(page);
   expect(source).not.toContain("Clockwise");
   expect(source).not.toContain("Enter any unit");
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -696,7 +697,7 @@ test("resizes Properties and applies component presentation as editable code", a
   await expect(
     page.getByTestId("annotation-hit-instance-label-R1"),
   ).toHaveCount(0);
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -859,7 +860,7 @@ test("Select All shows one batch code surface instead of object-specific forms",
 
   await batch.getByRole("button", { name: "Edit line color" }).click();
   await page.getByRole("button", { name: "Use Red for line" }).click();
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -939,7 +940,7 @@ test("Properties keeps component and Annotation text colors independent", async 
   await expect(label).toHaveAttribute("fill", "#dc2626");
   expect(JSON.parse(await readComponentPropertyCode(page)).color).toBe("auto");
 
-  const project = JSON.parse(
+  const project = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -1244,7 +1245,7 @@ for (const symbol of ["nmos", "pmos"]) {
 
     const readDocument = async (): Promise<SchematicDocument> => {
       const bytes = await downloadBytes(page, "File", "Export Project File…");
-      return JSON.parse(bytes.toString("utf8")).documents[0];
+      return parseSavedProject(bytes.toString("utf8")).documents[0];
     };
     const valueAnchor = (document: SchematicDocument) => {
       const anchor = document.annotations.find(
@@ -1502,7 +1503,7 @@ test("selects a reviewed SKY130 MOS through the inline Target netlist field", as
   );
   await expectComponentCodeField(page, "netlistName", "M1");
 
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -1548,7 +1549,7 @@ test("keeps the exact SKY130 PNP on its three-terminal model interface", async (
   await expect(properties.getByLabel("Substrate Net")).toHaveCount(0);
   await expectComponentCodeField(page, "netlistName", "Q1");
 
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -1580,7 +1581,7 @@ test("derives NPN substrate from its exact Model", async ({ page }) => {
   await expect(properties.getByLabel("Substrate Net")).toBeVisible();
   await expectComponentCodeField(page, "netlistName", "Q1");
 
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -1707,7 +1708,7 @@ for (const symbol of ["xfmr", "tcoil"] as const) {
     expect(svg).toContain("K = 0.83");
     expect(svg).toContain(`${windingLabel} = 2.5n`);
     const saved = await downloadBytes(page, "File", "Export Project File…");
-    const project = JSON.parse(saved.toString("utf8"));
+    const project = parseSavedProject(saved.toString("utf8"));
     const instanceId = project.documents[0].instances[0].id;
     expect(
       project.documents[0].annotations.filter(
@@ -1795,7 +1796,7 @@ test("batch Code edits common resistor values and colors atomically and reopens 
   await page.getByRole("button", { name: "Redo", exact: true }).click();
   const saved = await downloadBytes(page, "File", "Export Project File…");
   expect(
-    JSON.parse(saved.toString("utf8")).documents[0].instances,
+    parseSavedProject(saved.toString("utf8")).documents[0].instances,
   ).toMatchObject([
     {
       id: "R1",
@@ -1872,7 +1873,7 @@ test("batch Code colors different component types while rejecting incompatible v
     await expect(
       page.locator(`[data-object-id="${id}"] [data-role="instance-symbol"]`),
     ).toHaveAttribute("stroke", "#dc2626");
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -1908,7 +1909,7 @@ test("batch Code drafts follow selection identity even when common values are id
   await editComponentPropertyCode(page, (code) => {
     code.parameters.value = "22k";
   });
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -1936,7 +1937,7 @@ test("common item fields start with type and name and preserve reference binding
     "color",
   ]);
   await setComponentCodeField(page, "name", "RL");
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),

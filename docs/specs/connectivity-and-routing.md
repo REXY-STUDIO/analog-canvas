@@ -50,6 +50,39 @@ reformat committed Routes. `power-rail` is the single exception: one straight,
 non-zero horizontal or vertical segment. All modes use the shared segment
 kernel, stable leg identity, and Route transaction.
 
+## Completed-edit connectivity
+
+Wire authoring submits endpoint identities and a path. It no longer needs to
+assign terminal membership or merge Base Nets before that path can be drawn.
+`set_route_path` and `route_orthogonal` validate geometry while staging; their
+`netId` is an identity hint, not an electrical connection. Committed Routes
+still carry the resolved Base-Net ID for existing readers and file formats.
+
+After the transaction's geometry and endpoint-follow edits are complete, the
+Edit Engine builds one transient connection graph from the surviving Routes
+and confirmed direct endpoint contacts. It partitions and merges Base Nets
+from this graph, retargets owned labels/interfaces and bulk bindings, then
+settles newly authored endpoint contacts and normalizes conductor coverage.
+Logical naming/scope resolution and final schema validation run on that final
+candidate. A replacement wire in the same transaction can therefore preserve
+a connection regardless of whether its old path was cut first or last.
+Repointing a Route releases the old pin when no remaining physical path holds
+it; reusing a Net ID on disconnected strokes does not connect those strokes.
+Interior-to-interior crossings still provide no connection edge.
+
+Pre-existing unrouted/imported membership remains explicit authoring intent
+supported by the runtime model: reconstruction preserves bridges between its
+previously separate physical components, not a clique between every terminal.
+Consequently a formerly routed edge is not restored merely from its old Net
+membership. `cut_connection` deliberately releases that Net's unrouted intent;
+`remove_route_geometry` and returning a part to the tray preserve it. Explicit
+Agent `connect_endpoints`/`merge_nets` remain logical authoring operations.
+Labels, power markers and Cell interfaces retain their separate logical role.
+
+This is an edit-commit boundary, not a passive read repair or a new persisted
+format. It does not remove legacy membership fields or rewrite Gallery files.
+Undo restores the whole committed document, including the derived membership.
+
 ## Authoring rules
 
 - Starting and ending a wire on terminals or explicit Junctions creates or

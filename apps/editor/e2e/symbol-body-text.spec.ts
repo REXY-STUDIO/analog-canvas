@@ -1,3 +1,4 @@
+import { parseSavedProject } from "./editor-fixtures";
 import { revealPropertiesShelf } from "./editor-fixtures.js";
 import { expect, test, type Page } from "@playwright/test";
 
@@ -105,7 +106,7 @@ test("the Properties field shows what the canvas edit committed", async ({
     "current steering",
   );
 
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),

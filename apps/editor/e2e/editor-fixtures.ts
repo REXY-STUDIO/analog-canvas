@@ -1,3 +1,4 @@
+import { parseProject } from "@icm/project-protocol";
 import { expect, type Locator, type Page } from "@playwright/test";
 
 /** Wait until the route-split editor shell is ready to receive shortcuts. */
@@ -387,4 +388,11 @@ export async function copyNetlistText(
   expect(downloads).toBe(0);
   page.off("download", downloaded);
   return normalizedText;
+}
+
+/** Decode a downloaded portable file before asserting editor-model behavior.
+ * Format-specific tests inspect raw JSON themselves; other journeys should
+ * not accidentally prescribe the storage layout. */
+export function parseSavedProject(text: string): any {
+  return parseProject(text);
 }

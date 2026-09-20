@@ -45,3 +45,5 @@ export * from "./visual.js";
 export * from "./simulatability.js";
 export * from "./arrow-artwork.js";
 export * from "./master-names.js";
+
+export { ConnectionGraph } from "./connection-graph.js";

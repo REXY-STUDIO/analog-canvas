@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { CURRENT_PROJECT_SCHEMA_VERSION } from "@icm/model";
 import {
   parseProject,
+  canonicalConnectionIndexes,
   serializeProject,
   tryParseProjectWithMetadata,
 } from "./index.js";
@@ -84,8 +85,10 @@ describe("supported Project compatibility corpus", () => {
       expect(result.migrated).toBe(true);
       const saved = serializeProject(result.project);
       assertCurrentForm(saved);
-      expect(parseProject(saved)).toEqual(
-        withProjectComponentDefinitions(result.project),
+      expect(canonicalConnectionIndexes(parseProject(saved))).toEqual(
+        canonicalConnectionIndexes(
+          withProjectComponentDefinitions(result.project),
+        ),
       );
     }
   });

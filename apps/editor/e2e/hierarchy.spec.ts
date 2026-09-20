@@ -1,3 +1,4 @@
+import { parseSavedProject } from "./editor-fixtures";
 import { expect, test } from "@playwright/test";
 import { analyzeDesignNetlist } from "@icm/netlist";
 import { reviewedExternalBindingForMaster } from "@icm/devices";
@@ -162,7 +163,7 @@ test("creates a Cell parameter from a device JSON field with atomic Undo", async
   await dialog.getByRole("button", { name: "Apply", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   const save = async () =>
-    JSON.parse(
+    parseSavedProject(
       (await downloadBytes(page, "File", "Export Project File…")).toString(
         "utf8",
       ),
@@ -362,7 +363,7 @@ test("edits independent parent parameter overrides and follows definition rename
   await expectComponentCodeField(page, "parameters.Resistance", "4k");
   await clickCommand(page, "Edit", "Redo");
   await expectComponentCodeField(page, "parameters.Resistance", "");
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -421,7 +422,7 @@ test("keeps a chosen simulation Cell independent of later default Top changes", 
     }),
   ).toBeVisible();
   const snapshot = async (): Promise<CircuitProject> =>
-    JSON.parse(
+    parseSavedProject(
       (await downloadBytes(page, "File", "Export Project File…")).toString(),
     );
   const before = await snapshot();
@@ -468,7 +469,7 @@ test("sets a Cell as default Top without changing its circuit and supports Undo"
   );
   await manager.getByRole("button", { name: "Close Cell Manager" }).click();
   const save = async () =>
-    JSON.parse(
+    parseSavedProject(
       (await downloadBytes(page, "File", "Export Project File…")).toString(
         "utf8",
       ),
@@ -497,7 +498,7 @@ test("saves ordinary Cell order without changing Top and restores it with Undo",
     buffer: Buffer.from(JSON.stringify(project)),
   });
   const snapshot = async () =>
-    JSON.parse(
+    parseSavedProject(
       (await downloadBytes(page, "File", "Export Project File…")).toString(),
     );
   const normalized = await snapshot();
@@ -865,7 +866,7 @@ test("creates and places an external interface with connected netlist semantics"
   );
   await layoutShelf.click();
   await expect(page.getByTestId("cell-symbol-layout-overlay")).toHaveCount(0);
-  const project = JSON.parse(
+  const project = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -992,7 +993,7 @@ test("places an unreferenced top Cell in an ordinary new Cell", async ({
     .getByTestId("schematic-canvas")
     .click({ position: { x: 320, y: 180 } });
   await page.keyboard.press("Escape");
-  const project = JSON.parse(
+  const project = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -1579,7 +1580,7 @@ test("confirms connected last-Port deletion and restores caller wires with Undo 
   });
   await page.getByTestId("document-selector").selectOption(child.id);
   const snapshot = async (): Promise<CircuitProject> =>
-    JSON.parse(
+    parseSavedProject(
       (await downloadBytes(page, "File", "Export Project File…")).toString(),
     );
   const circuit = (value: CircuitProject) =>
@@ -1793,7 +1794,7 @@ test("same-name Cell Pins stay independent while the final interface groups them
   await expect(manager).toContainText("2 markers");
   await expect(manager).toContainText("Direction conflict");
   await manager.getByRole("button", { name: "Close Cell Manager" }).click();
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),

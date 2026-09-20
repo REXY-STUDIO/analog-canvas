@@ -2,7 +2,10 @@ import { useEffect, useRef, useState } from "react";
 
 import { createEmptyProject, createId } from "@icm/model";
 import type { CircuitProject, GridRect, SchematicDocument } from "@icm/model";
-import { serializeProject } from "@icm/project-protocol";
+import {
+  CURRENT_PROJECT_FILE_VERSION,
+  serializeProject,
+} from "@icm/project-protocol";
 import {
   builtInSymbols,
   findUnsupportedProjectSymbolIds,
@@ -617,7 +620,7 @@ export function useProjectFileLifecycle({
       });
       setStatus(
         staged.migrated
-          ? `Imported and upgraded ${staged.fileName} from schema ${staged.sourceSchemaVersion} to schema ${openedProject.schemaVersion}${normalizedDocumentCount > 0 ? ` and normalized connectivity and Wire topology in ${normalizedDocumentCount} Cell${normalizedDocumentCount === 1 ? "" : "s"}${drawnNote}` : ""} — save to Cloud or export to keep the upgrade`
+          ? `Imported and upgraded ${staged.fileName} from schema ${staged.sourceSchemaVersion} to schema ${CURRENT_PROJECT_FILE_VERSION}${normalizedDocumentCount > 0 ? ` and normalized connectivity and Wire topology in ${normalizedDocumentCount} Cell${normalizedDocumentCount === 1 ? "" : "s"}${drawnNote}` : ""} — save to Cloud or export to keep the upgrade`
           : normalizedDocumentCount > 0
             ? `Opened ${staged.fileName} and normalized connectivity and Wire topology in ${normalizedDocumentCount} Cell${normalizedDocumentCount === 1 ? "" : "s"}${drawnNote} — save to Cloud or export to keep the repair`
             : `Opened ${staged.fileName} at revision ${staged.topDocumentRevision}`,

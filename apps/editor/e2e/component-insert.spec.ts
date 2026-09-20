@@ -1,3 +1,4 @@
+import { parseSavedProject } from "./editor-fixtures";
 import { expect, test } from "@playwright/test";
 import { createEmptyProject, createRoutePath } from "@icm/model";
 
@@ -14,8 +15,19 @@ import {
   expectComponentCodeField,
   readComponentPropertyCode,
   readDocumentStyleCode,
-  recoveryProjectTexts,
+  readRecoveryRecords,
 } from "./editor-fixtures.js";
+
+// These tests assert device behavior against decoded content, independently
+// of the current portable field spelling and structural shorthand.
+async function recoveryProjectTexts(page: import("@playwright/test").Page) {
+  const records = await readRecoveryRecords(page);
+  return records
+    .map((record) =>
+      JSON.stringify(parseSavedProject(record.projectText), null, 2),
+    )
+    .join("\n");
+}
 
 async function openSelectionShelf(page: import("@playwright/test").Page) {
   await revealPropertiesShelf(page);
@@ -986,7 +998,7 @@ test("places a vertical Power Rail from I and renames it on the canvas", async (
   expect(new Set(railPoints.map((point) => point.x)).size).toBe(1);
   expect(railPoints.at(-1)!.y).not.toBe(railPoints[0]!.y);
 
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -1061,7 +1073,7 @@ test("places the VDD power-port device as the default VDD entry", async ({
   await expect(canvas.getByText("VDD", { exact: true })).toHaveCount(2);
   await expect(page.getByTestId("instance-count")).toHaveText("2");
 
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -1645,7 +1657,7 @@ test("edits independent input and output swaps with undo, named connections and 
   await expectComponentCodeField(page, "appearance.outputsSwapped", true);
 
   const bytes = await downloadBytes(page, "File", "Export Project File…");
-  const saved = JSON.parse(bytes.toString("utf8"));
+  const saved = parseSavedProject(bytes.toString("utf8"));
   expect(saved.documents[0].nets).toEqual(document.nets);
   expect(
     saved.documents[0].routes.map((route: { start: unknown }) => route.start),

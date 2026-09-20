@@ -1,3 +1,4 @@
+import { parseSavedProject } from "./editor-fixtures";
 import { expect, test } from "@playwright/test";
 import { resolve } from "node:path";
 import { inflateSync } from "node:zlib";
@@ -336,7 +337,9 @@ test("exports one formal visual scene as Project, SVG, PNG, and PDF", async ({
     "File",
     "Export Project File…",
   );
-  expect(JSON.parse(projectBytes.toString("utf8")).topDocumentId).toBeTruthy();
+  expect(
+    parseSavedProject(projectBytes.toString("utf8")).topDocumentId,
+  ).toBeTruthy();
   const svg = (await downloadBytes(page, "File", "Export SVG")).toString(
     "utf8",
   );
@@ -1058,7 +1061,7 @@ test("exports a MOS pair without bulk wiring or supply symbols", async ({
   const spice = await copyNetlistText(page, "spice");
   expect(spice).toContain(".subckt dut VDD VSS VIN VIN2");
   expect(spice).not.toContain(".global");
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
