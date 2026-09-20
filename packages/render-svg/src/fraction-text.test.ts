@@ -57,6 +57,8 @@ describe("mixed fraction text", () => {
     expect(svg).toContain('fill="#246bfd"');
     expect(svg).toContain('stroke="#246bfd"');
     expect(svg).toContain(" + R");
+    expect(svg).not.toContain("textLength");
+    expect(svg).not.toContain("lengthAdjust");
     const bars = [
       ...svg.matchAll(
         /data-role="fraction-bar" x1="([^"]+)" x2="([^"]+)" y1="([^"]+)"/g,
