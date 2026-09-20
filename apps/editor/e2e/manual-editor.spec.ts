@@ -1,3 +1,4 @@
+import { parseSavedProject } from "./editor-fixtures";
 import { createRoutePath } from "@icm/model";
 import type { SchematicDocument } from "@icm/model";
 import { expect, test } from "@playwright/test";
@@ -139,7 +140,7 @@ async function dragHandleToPoint(
 }
 
 async function exportedConnectivity(page: Page) {
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -392,7 +393,7 @@ test("property code keeps a drawn wired instance visible and moves it with grid 
   await page.keyboard.press("Escape");
   await page.getByTestId("hit-R1").click();
   await openSelectionShelf(page);
-  const before = JSON.parse(
+  const before = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -410,7 +411,7 @@ test("property code keeps a drawn wired instance visible and moves it with grid 
   await expect(discard).toBeVisible();
   await expect(page.getByTestId("hit-R1")).toHaveCount(1);
   await expect(page.getByTestId("revision")).toHaveText(revision!);
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -973,7 +974,7 @@ test("initializes PMOS bulk from the first explicitly drawn VDD rail", async ({
   await canvas.click({ position: { x: 520, y: 100 } });
   await page.keyboard.press("Escape");
 
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -1253,7 +1254,7 @@ test("Cell Pin deletion releases its interface and Base Net lifecycle", async ({
 
   await placeNamedPort("BUS", { x: 260, y: 180 });
 
-  let saved = JSON.parse(
+  let saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -1288,7 +1289,7 @@ test("Cell Pin deletion releases its interface and Base Net lifecycle", async ({
 
   await page.getByTestId("hit-P1").click();
   await page.keyboard.press("Delete");
-  saved = JSON.parse(
+  saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -1320,7 +1321,7 @@ test("Ctrl+R mirrors a selected component instead of refreshing", async ({
   await placeComponent(page, "nmos", { x: 340, y: 220 });
   await page.getByTestId("hit-M1").click();
   await page.keyboard.press("Control+r");
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -1359,7 +1360,7 @@ test("treats hollow and filled Cell Pins as equivalent interface variants", asyn
   await page.getByTestId("hit-P2").click();
   await page.keyboard.press("Delete");
   await expect(page.getByTestId("hit-P2")).toHaveCount(0);
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -1468,7 +1469,7 @@ test("component property code turns a connected part by 45 degrees", async ({
     "Applied Canvas property code to R1",
   );
   await expect(page.locator('[data-layer="routes"] polyline')).toHaveCount(1);
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -2064,7 +2065,7 @@ test("fills a closed shape and moves it behind or in front of circuit artwork", 
   ).toHaveCount(1);
 
   await properties.getByRole("button", { name: "Bring to front" }).click();
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -2130,7 +2131,8 @@ test("changes wire line style while preserving color, arrow, export and undo", a
   ).toBe("dotted");
   const saved = await downloadBytes(page, "File", "Export Project File…");
   expect(
-    JSON.parse(saved.toString("utf8")).documents[0].routes[0].styleOverride,
+    parseSavedProject(saved.toString("utf8")).documents[0].routes[0]
+      .styleOverride,
   ).toEqual({
     lineStyle: "dotted",
     color: "#dc2626",
@@ -2518,7 +2520,7 @@ test("initializes NMOS bulk from the first explicitly placed Ground", async ({
     bulk.getByRole("button", { name: "Draw bulk connection" }),
   ).toHaveText("Draw");
 
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -3158,7 +3160,7 @@ test("applies Route name, scope, and appearance from one JSON edit", async ({
     };
   });
   await expect(page.getByTestId("revision")).toHaveText(String(revision + 1));
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -3328,7 +3330,7 @@ test("formats a Net Label without changing its electrical Net name", async ({
     "File",
     "Export Project File…",
   );
-  const saved = JSON.parse(projectBytes.toString("utf8"));
+  const saved = parseSavedProject(projectBytes.toString("utf8"));
   expect(saved.documents[0].connectivityEvidence).toContainEqual(
     expect.objectContaining({
       kind: "name-claim",
@@ -3632,7 +3634,7 @@ test("stacks complementary scripts under one uninterrupted overbar", async ({
     numerator?: { runs: SavedRichTextRun[] };
     denominator?: { runs: SavedRichTextRun[] };
   };
-  const project = JSON.parse(
+  const project = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -4029,7 +4031,7 @@ test("C inserts a fresh device instead of copying its name alias and source conn
   await page.getByTestId("hit-R1").click();
   await copySelectionAt(page, { x: 560, y: 420 });
   await expect(page.getByTestId("instance-count")).toHaveText("3");
-  const saved = JSON.parse(
+  const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -4371,7 +4373,7 @@ test("deletes imported Net Labels with non-editor ids", async ({ page }) => {
     "File",
     "Export Project File…",
   );
-  const savedDocument = JSON.parse(savedWithoutLabel.toString("utf8"))
+  const savedDocument = parseSavedProject(savedWithoutLabel.toString("utf8"))
     .documents[0];
   expect(savedDocument.annotations).toHaveLength(0);
   expect(savedDocument.connectivityEvidence).not.toContainEqual(
@@ -5710,7 +5712,7 @@ test("bonds pins crossed by Power Rail drawing, resizing, and dragging", async (
     await page.mouse.up();
   };
   const readDocument = async () =>
-    JSON.parse(
+    parseSavedProject(
       (await downloadBytes(page, "File", "Export Project File…")).toString(
         "utf8",
       ),

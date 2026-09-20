@@ -97,7 +97,9 @@ export function netEndpointGroups(
   for (const route of document.routes.filter(
     (candidate) => candidate.netId === netId,
   )) {
-    union(endpointKey(route.start), endpointKey(routeEnd(route)));
+    const from = endpointKey(route.start);
+    const to = endpointKey(routeEnd(route));
+    if (parent.has(from) && parent.has(to)) union(from, to);
   }
   // A pin or Junction placed directly on another explicit same-Net endpoint
   // is a real electrical contact even when no Route object exists between the
@@ -227,20 +229,31 @@ export function validateRoute(
   route: RouteBranch,
   resolver: SymbolResolver,
   resolvedPath?: ReturnType<typeof resolveRouteEditPath>,
+  membership: "committed" | "pending" = "committed",
 ): string | null {
   const net = document.nets.find((candidate) => candidate.id === route.netId);
-  if (!net) return `Route net does not exist: ${route.netId}`;
+  if (membership === "committed" && !net)
+    return `Route net does not exist: ${route.netId}`;
   if (
+    membership === "committed" &&
     route.presentation === "power-rail" &&
-    !resolveDocumentLogicalNets(document).byBaseNetId.get(net.id)?.name
+    !resolveDocumentLogicalNets(document).byBaseNetId.get(route.netId)?.name
   ) {
     return `Power rail ${route.id} must belong to a named Net`;
   }
-  if (!endpointBelongsToNet(document, net, route.start)) {
+  if (
+    membership === "committed" &&
+    net &&
+    !endpointBelongsToNet(document, net, route.start)
+  ) {
     return `Route from endpoint is not a member of ${route.netId}`;
   }
   const end = routeEnd(route);
-  if (!endpointBelongsToNet(document, net, end)) {
+  if (
+    membership === "committed" &&
+    net &&
+    !endpointBelongsToNet(document, net, end)
+  ) {
     return `Route to endpoint is not a member of ${route.netId}`;
   }
   const polyline =

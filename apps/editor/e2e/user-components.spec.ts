@@ -1,3 +1,4 @@
+import { parseSavedProject } from "./editor-fixtures";
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import { DatabaseSync } from "node:sqlite";
 import { createEmptyProject, type CircuitProject } from "@icm/model";
@@ -97,7 +98,7 @@ async function readProject(page: Page): Promise<CircuitProject> {
   await editor.focus();
   await page.keyboard.press("ControlOrMeta+a");
   await page.keyboard.press("ControlOrMeta+c");
-  const project = JSON.parse(
+  const project = parseSavedProject(
     await page.evaluate(() => navigator.clipboard.readText()),
   );
   await page.getByTestId("project-code-toggle").click();

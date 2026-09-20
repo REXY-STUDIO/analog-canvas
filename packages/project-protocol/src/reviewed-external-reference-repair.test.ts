@@ -32,7 +32,7 @@ function legacyProject() {
 describe("legacy reviewed external reference repair", () => {
   it("canonicalizes the old authored device prefix to the ngspice X call", () => {
     const opened = parseProjectWithMetadata(JSON.stringify(legacyProject()));
-    expect(opened.migrated).toBe(false);
+    expect(opened.migrated).toBe(true);
     expect(opened.project.documents[0]!.instances[0]!.reference).toBe("XM1");
   });
 

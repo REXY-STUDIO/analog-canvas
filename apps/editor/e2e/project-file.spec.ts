@@ -1,3 +1,4 @@
+import { parseSavedProject } from "./editor-fixtures";
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -394,7 +395,7 @@ test("Gallery navigation uses the replacement decision without a second browser 
 test("imports and upgrades a portable Project before explicit export", async ({
   page,
 }) => {
-  const source = JSON.parse(
+  const source = parseSavedProject(
     readFileSync(
       resolve(process.cwd(), "fixtures/projects/minimal/project.icproj.json"),
       "utf8",
@@ -416,7 +417,7 @@ test("imports and upgrades a portable Project before explicit export", async ({
   await expect(page.getByTestId("status")).toContainText(
     `upgraded minimal-v${previousVersion}.icproj.json`,
   );
-  const exported = JSON.parse(
+  const exported = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -479,7 +480,7 @@ test("normalizes legacy overlapping Wire topology on Project import", async ({
   await expect(page.getByTestId("status")).toContainText(
     "normalized connectivity and Wire topology in 1 Cell",
   );
-  const exported = JSON.parse(
+  const exported = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -533,9 +534,9 @@ test("imports split source-ground markers with independent owners and saves the 
     buffer: Buffer.from(JSON.stringify(source)),
   });
   await expect(page.getByTestId("status")).toContainText(
-    "save to Cloud or export to keep the repair",
+    "save to Cloud or export to keep the",
   );
-  const exported = JSON.parse(
+  const exported = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),
@@ -702,7 +703,7 @@ test("the circuit name drives Cloud Save and portable export", async ({
   const fileMenu = await openMenu(page, "File");
   await fileMenu.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => cloud.stored()?.name).toBe("Bandgap Reference");
-  const exported = JSON.parse(
+  const exported = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),

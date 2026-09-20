@@ -6,6 +6,7 @@ import {
   validateLogicalNetContract,
 } from "@icm/derived";
 import { EditTransactionSchema, type EditTransaction } from "./edit-schema.js";
+import { rebuildEditedConnectivity } from "./transaction-connectivity-rebuild.js";
 import {
   affectedConductorNetIds,
   normalizeSameNetConductorTopology,
@@ -696,6 +697,39 @@ export function executeTransaction(
         changedRouteIds.add(routeId);
       }
     }
+  }
+
+  if (
+    transaction.edits.some((edit) =>
+      [
+        "set_route_path",
+        "route_orthogonal",
+        "cut_connection",
+        "remove_route_geometry",
+        "move_junction",
+        "connect_endpoints",
+        "disconnect_endpoint",
+      ].includes(edit.kind),
+    )
+  ) {
+    const membershipBeforeRebuild = JSON.stringify(draft.nets);
+    const rebuilt = rebuildEditedConnectivity(
+      document,
+      draft,
+      transaction,
+      resolver,
+      changedObjectIds,
+    );
+    if (!rebuilt.ok)
+      return rejectTransaction(
+        document,
+        rebuilt.code,
+        rebuilt.message,
+        [],
+        rebuilt.netIds,
+      );
+    connectivityChanged ||=
+      membershipBeforeRebuild !== JSON.stringify(draft.nets);
   }
 
   if (resolver) {

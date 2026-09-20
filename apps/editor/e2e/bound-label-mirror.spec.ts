@@ -1,3 +1,4 @@
+import { parseSavedProject } from "./editor-fixtures";
 import { expect, test, type Page } from "@playwright/test";
 import { createEmptyProject, type Annotation } from "@icm/model";
 import {
@@ -87,7 +88,7 @@ async function openFixture(page: Page) {
   return project.documents[0]!;
 }
 async function savedDocument(page: Page) {
-  const project = JSON.parse(
+  const project = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
     ),

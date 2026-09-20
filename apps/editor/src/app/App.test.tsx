@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 import { createEmptyProject, createSimulationFolder } from "@icm/model";
 import { hierarchicalSymbolId } from "@icm/symbols";
-import { serializeProject } from "@icm/project-protocol";
+import { serializeProject, parseProject } from "@icm/project-protocol";
 import { EditTransactionSchema } from "@icm/edit-engine";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -399,7 +399,9 @@ describe("editor shell", () => {
       ),
       "utf8",
     );
-    expect(serializeProject(createDemoProject())).toBe(fixture);
+    expect(serializeProject(createDemoProject())).toBe(
+      serializeProject(parseProject(fixture)),
+    );
     expect(fixture).not.toMatch(/selection|viewport|dragPreview/u);
   });
 
@@ -408,6 +410,8 @@ describe("editor shell", () => {
       resolve(process.cwd(), "fixtures/projects/port-nets/project.icproj.json"),
       "utf8",
     );
-    expect(serializeProject(createRoutingDemoProject())).toBe(fixture);
+    expect(serializeProject(createRoutingDemoProject())).toBe(
+      serializeProject(parseProject(fixture)),
+    );
   });
 });

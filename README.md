@@ -15,7 +15,8 @@ edit model.
 
 - **Connectivity-aware editing:** place devices, route wires, distinguish
   Crossings from Junctions, label Nets, and make undoable multi-object edits
-  without treating drawing geometry as electrical truth.
+  deriving physical networks from completed wire edits while keeping logical
+  labels and unrouted import intent explicit.
 - **Reusable hierarchy:** author each schematic as a Cell, define independent
   Cell Pins, place reusable hierarchical blocks, and navigate between callers
   and child Cells.

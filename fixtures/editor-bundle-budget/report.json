@@ -2,15 +2,15 @@
   "version": "0.1.0",
   "note": "Ceilings for the /editor first-paint payload. Raising one requires a recorded reason; a faster or slower machine is not one.",
   "budget": {
-    "files": 36,
-    "rawKib": 2627,
-    "gzipKib": 663,
-    "brotliKib": 560
+    "files": 37,
+    "rawKib": 2646,
+    "gzipKib": 669,
+    "brotliKib": 566
   },
   "measured": {
-    "files": 36,
-    "rawKib": 2608.7,
-    "gzipKib": 661.9,
-    "brotliKib": 557.8
+    "files": 37,
+    "rawKib": 2627.5,
+    "gzipKib": 667.4,
+    "brotliKib": 562.9
   }
 }

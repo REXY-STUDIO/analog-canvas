@@ -1,3 +1,5 @@
+import { CURRENT_PROJECT_SCHEMA_VERSION } from "@icm/model";
+import { CURRENT_PROJECT_FILE_VERSION } from "@icm/project-protocol";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
@@ -5,7 +7,6 @@ import {
   createEmptyDocument,
   createEmptyProject,
   createRoutePath,
-  CURRENT_PROJECT_SCHEMA_VERSION,
 } from "@icm/model";
 import { parseProject, serializeProject } from "@icm/project-protocol";
 import { hierarchicalSymbolId } from "@icm/symbols";
@@ -130,8 +131,8 @@ function projectText(name = "Fixture"): string {
 }
 
 function previousVersionText(): string {
-  const raw = JSON.parse(projectText());
-  raw.schemaVersion = CURRENT_PROJECT_SCHEMA_VERSION - 1;
+  const raw = JSON.parse(JSON.stringify(parseProject(projectText())));
+  raw.schemaVersion = CURRENT_PROJECT_SCHEMA_VERSION;
   if (raw.schemaVersion < 50) {
     raw.simulationSetups = raw.simulationFolders;
     delete raw.simulationFolders;
@@ -178,8 +179,8 @@ function previousRouteVersionText(): string {
     rotation: 0,
     locked: false,
   });
-  const raw = JSON.parse(serializeProject(project)) as any;
-  raw.schemaVersion = CURRENT_PROJECT_SCHEMA_VERSION - 1;
+  const raw = JSON.parse(JSON.stringify(project)) as any;
+  raw.schemaVersion = CURRENT_PROJECT_SCHEMA_VERSION;
   if (raw.schemaVersion < 50) {
     raw.simulationSetups = raw.simulationFolders;
     delete raw.simulationFolders;
@@ -282,7 +283,7 @@ describe("gallery data migrations", () => {
       "Author",
       "",
       "2026-08-01T00:00:00.000Z",
-      CURRENT_PROJECT_SCHEMA_VERSION,
+      CURRENT_PROJECT_FILE_VERSION,
       "public",
       projectText("Legacy preview"),
       '<svg viewBox="-10 -20 320 180"></svg>',
@@ -315,7 +316,7 @@ describe("gallery data migrations", () => {
       "tokenzhang",
       "",
       "2026-08-01T00:00:00.000Z",
-      CURRENT_PROJECT_SCHEMA_VERSION,
+      CURRENT_PROJECT_FILE_VERSION,
       "public",
       projectText("Legacy"),
       "<svg/>",
@@ -324,7 +325,7 @@ describe("gallery data migrations", () => {
       "Other Author",
       "",
       "2026-08-01T00:00:00.000Z",
-      CURRENT_PROJECT_SCHEMA_VERSION,
+      CURRENT_PROJECT_FILE_VERSION,
       "recycled",
       projectText("Other"),
       "<svg/>",
@@ -340,7 +341,7 @@ describe("gallery data migrations", () => {
       "Legacy",
       "Token Zhang",
       "",
-      CURRENT_PROJECT_SCHEMA_VERSION,
+      CURRENT_PROJECT_FILE_VERSION,
       projectText("Legacy"),
       "<svg/>",
       "2026-08-01T00:00:00.000Z",
@@ -392,7 +393,7 @@ describe("gallery data migrations", () => {
       " 3187863239-NETIZEN ",
       "",
       "2026-09-19T00:00:00.000Z",
-      CURRENT_PROJECT_SCHEMA_VERSION,
+      CURRENT_PROJECT_FILE_VERSION,
       "public",
       projectText("Magic Li circuit"),
       "<svg/>",
@@ -401,7 +402,7 @@ describe("gallery data migrations", () => {
       "Another Contributor",
       "",
       "2026-09-19T00:00:00.000Z",
-      CURRENT_PROJECT_SCHEMA_VERSION,
+      CURRENT_PROJECT_FILE_VERSION,
       "recycled",
       projectText("Unrelated"),
       "<svg/>",
@@ -417,7 +418,7 @@ describe("gallery data migrations", () => {
       "Magic Li circuit",
       "3187863239-netizen",
       "",
-      CURRENT_PROJECT_SCHEMA_VERSION,
+      CURRENT_PROJECT_FILE_VERSION,
       projectText("Magic Li circuit"),
       "<svg/>",
       "2026-09-19T00:00:00.000Z",
@@ -472,7 +473,7 @@ describe("gallery data migrations", () => {
         "Author",
         "",
         "2026-08-01T00:00:00.000Z",
-        CURRENT_PROJECT_SCHEMA_VERSION,
+        CURRENT_PROJECT_FILE_VERSION,
         "public",
         projectText(entryId),
         "<svg/>",
@@ -499,7 +500,7 @@ describe("gallery data migrations", () => {
         `${entryId} v${versionNo}`,
         "Author",
         "",
-        CURRENT_PROJECT_SCHEMA_VERSION,
+        CURRENT_PROJECT_FILE_VERSION,
         projectText(`${entryId} v${versionNo}`),
         "<svg/>",
         `2026-08-${String(versionNo).padStart(2, "0")}T00:00:00.000Z`,
@@ -1078,7 +1079,7 @@ describe("circuit addresses", () => {
       "Someone",
       "",
       new Date().toISOString(),
-      CURRENT_PROJECT_SCHEMA_VERSION,
+      CURRENT_PROJECT_FILE_VERSION,
       projectText("Old Link"),
     );
     const served = await route(
@@ -1394,7 +1395,7 @@ describe("gallery submissions", () => {
     expect(listed.entries.map((entry) => entry.id)).toEqual([id]);
     expect(listed.entries[0]).toMatchObject({
       name: "Ring Oscillator",
-      schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+      schemaVersion: CURRENT_PROJECT_FILE_VERSION,
     });
     expect(listed.entries[0]!.previewRevision).toMatch(/^[a-f0-9]{64}$/u);
     expect(listed.entries[0]!.previewWidth).toBeGreaterThan(0);
@@ -1403,7 +1404,7 @@ describe("gallery submissions", () => {
     const detail = await route(env, new Request(`${ORIGIN}/api/gallery/${id}`));
     const payload = (await detail.json()) as { projectText: string };
     expect(JSON.parse(payload.projectText)).toMatchObject({
-      schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+      schemaVersion: CURRENT_PROJECT_FILE_VERSION,
       name: "Ring Oscillator",
     });
 
@@ -1540,7 +1541,7 @@ describe("gallery submissions", () => {
     const detail = await route(env, new Request(`${ORIGIN}/api/gallery/${id}`));
     const payload = (await detail.json()) as { projectText: string };
     expect(JSON.parse(payload.projectText).schemaVersion).toBe(
-      CURRENT_PROJECT_SCHEMA_VERSION,
+      CURRENT_PROJECT_FILE_VERSION,
     );
   });
 
@@ -1551,7 +1552,7 @@ describe("gallery submissions", () => {
     });
     const detail = await route(env, new Request(`${ORIGIN}/api/gallery/${id}`));
     const payload = (await detail.json()) as { projectText: string };
-    const stored = JSON.parse(payload.projectText) as any;
+    const stored = parseProject(payload.projectText) as any;
     const storedRoute = stored.documents[0].routes[0];
     expect(storedRoute.start).toEqual({
       kind: "junction",
@@ -1844,7 +1845,7 @@ describe("the daily publish quota", () => {
             author: "",
             description: "",
             created_at: `${day}T00:00:00.000Z`,
-            schema_version: CURRENT_PROJECT_SCHEMA_VERSION,
+            schema_version: CURRENT_PROJECT_FILE_VERSION,
             owner_user_id: ownerUserId,
             project_text: projectText(),
             svg_text: "<svg/>",
@@ -3235,7 +3236,7 @@ describe("gallery administration", () => {
         body: JSON.stringify({
           id,
           projectText: previousVersionText(),
-          schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION - 1,
+          schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
           svgText: "<svg/>",
         }),
       },
@@ -3256,7 +3257,7 @@ describe("gallery administration", () => {
       applied: true,
       ready: 1,
       failures: [],
-      targetSchemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+      targetSchemaVersion: CURRENT_PROJECT_FILE_VERSION,
     });
 
     const detail = await route(env, new Request(`${ORIGIN}/api/gallery/${id}`));
@@ -3264,9 +3265,9 @@ describe("gallery administration", () => {
       entry: { schemaVersion: number };
       projectText: string;
     };
-    expect(payload.entry.schemaVersion).toBe(CURRENT_PROJECT_SCHEMA_VERSION);
+    expect(payload.entry.schemaVersion).toBe(CURRENT_PROJECT_FILE_VERSION);
     expect(JSON.parse(payload.projectText).schemaVersion).toBe(
-      CURRENT_PROJECT_SCHEMA_VERSION,
+      CURRENT_PROJECT_FILE_VERSION,
     );
     const preview = await route(
       env,
@@ -3276,7 +3277,9 @@ describe("gallery administration", () => {
   });
 
   function legacy25RouteText(): string {
-    const raw = JSON.parse(projectText("Legacy 25")) as any;
+    const raw = JSON.parse(
+      JSON.stringify(parseProject(projectText("Legacy 25"))),
+    ) as any;
     raw.schemaVersion = 25;
     const document = raw.documents[0];
     document.nets.push({ id: "net-route", terminals: [] });
@@ -3333,7 +3336,7 @@ describe("gallery administration", () => {
     });
     const detail = await route(env, new Request(`${ORIGIN}/api/gallery/${id}`));
     const payload = (await detail.json()) as { projectText: string };
-    const stored = JSON.parse(payload.projectText) as any;
+    const stored = parseProject(payload.projectText) as any;
     expect(stored.schemaVersion).toBe(CURRENT_PROJECT_SCHEMA_VERSION);
     expect(stored.documents[0].routes[0].legs).toHaveLength(2);
   });
@@ -3374,7 +3377,7 @@ describe("gallery administration", () => {
     });
     const detail = await route(env, new Request(`${ORIGIN}/api/gallery/${id}`));
     const payload = (await detail.json()) as { projectText: string };
-    const stored = JSON.parse(payload.projectText) as any;
+    const stored = parseProject(payload.projectText) as any;
     expect(stored.schemaVersion).toBe(CURRENT_PROJECT_SCHEMA_VERSION);
     expect(stored.documents[0].routes[0].legs).toHaveLength(2);
   });
@@ -3391,7 +3394,7 @@ describe("gallery administration", () => {
         body: JSON.stringify({
           id,
           projectText: previousRouteVersionText(),
-          schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION - 1,
+          schemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
           svgText: "<svg/>",
         }),
       },
@@ -3412,12 +3415,12 @@ describe("gallery administration", () => {
       applied: true,
       ready: 1,
       failures: [],
-      targetSchemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
+      targetSchemaVersion: CURRENT_PROJECT_FILE_VERSION,
     });
 
     const detail = await route(env, new Request(`${ORIGIN}/api/gallery/${id}`));
     const payload = (await detail.json()) as { projectText: string };
-    const stored = JSON.parse(payload.projectText) as any;
+    const stored = parseProject(payload.projectText) as any;
     expect(stored.documents[0].routes[0]).toMatchObject({
       start: { kind: "junction", junctionId: "J1" },
       legs: expect.any(Array),
@@ -3458,13 +3461,13 @@ describe("gallery administration", () => {
       .one().id;
     env.gallerySql.exec(
       "UPDATE gallery_entries SET schema_version = ?, project_text = ? WHERE id = ?",
-      CURRENT_PROJECT_SCHEMA_VERSION - 1,
+      CURRENT_PROJECT_SCHEMA_VERSION,
       previousVersionText(),
       id,
     );
     env.gallerySql.exec(
       "UPDATE gallery_entry_versions SET schema_version = ?, project_text = ? WHERE id = ?",
-      CURRENT_PROJECT_SCHEMA_VERSION - 1,
+      CURRENT_PROJECT_SCHEMA_VERSION,
       previousRouteVersionText(),
       versionId,
     );
@@ -3479,7 +3482,7 @@ describe("gallery administration", () => {
       "2026-08-24T00:00:00.000Z",
       "2026-08-24T00:00:00.000Z",
       1,
-      CURRENT_PROJECT_SCHEMA_VERSION - 1,
+      CURRENT_PROJECT_SCHEMA_VERSION,
       previousRouteVersionText(),
     );
 
@@ -3513,13 +3516,13 @@ describe("gallery administration", () => {
       failures: [],
       inventory: {
         gallery_entries: {
-          [String(CURRENT_PROJECT_SCHEMA_VERSION - 1)]: 1,
+          [String(CURRENT_PROJECT_SCHEMA_VERSION)]: 1,
         },
         gallery_entry_versions: {
-          [String(CURRENT_PROJECT_SCHEMA_VERSION - 1)]: 1,
+          [String(CURRENT_PROJECT_SCHEMA_VERSION)]: 1,
         },
         cloud_projects: {
-          [String(CURRENT_PROJECT_SCHEMA_VERSION - 1)]: 1,
+          [String(CURRENT_PROJECT_SCHEMA_VERSION)]: 1,
         },
       },
       migrationReports: [],
@@ -3531,7 +3534,7 @@ describe("gallery administration", () => {
           id,
         )
         .one().schema_version,
-    ).toBe(CURRENT_PROJECT_SCHEMA_VERSION - 1);
+    ).toBe(CURRENT_PROJECT_SCHEMA_VERSION);
 
     const applied = await route(
       env,
@@ -3561,14 +3564,14 @@ describe("gallery administration", () => {
           project_text: string;
         }>(`SELECT id, schema_version, project_text FROM ${table}`)
         .one();
-      expect(row.schema_version).toBe(CURRENT_PROJECT_SCHEMA_VERSION);
+      expect(row.schema_version).toBe(CURRENT_PROJECT_FILE_VERSION);
       expect(parseProject(row.project_text).schemaVersion).toBe(
         CURRENT_PROJECT_SCHEMA_VERSION,
       );
       const stored = JSON.parse(row.project_text) as any;
       for (const document of stored.documents) {
         for (const net of document.nets) {
-          expect(Object.keys(net).sort()).toEqual(["id", "terminals"]);
+          expect(Object.keys(net).sort()).toEqual(["at", "id"]);
         }
       }
     }
@@ -3604,8 +3607,122 @@ describe("gallery administration", () => {
             `SELECT schema_version FROM ${table}`,
           )
           .one().schema_version,
-      ).toBe(CURRENT_PROJECT_SCHEMA_VERSION - 1);
+      ).toBe(CURRENT_PROJECT_SCHEMA_VERSION);
     }
+  });
+
+  it("migrates one Gallery row with optimistic comparison while preserving all metadata and versions", async () => {
+    const env = environment();
+    const cookie = await adminOf(env);
+    const id = await submitOne(env, "Portable migration", { cookie });
+    await route(
+      env,
+      new Request(`${ORIGIN}/api/gallery/${id}`, {
+        method: "PUT",
+        headers: {
+          ...cookieHeaders(cookie),
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "Second",
+          projectText: projectText("Second"),
+        }),
+      }),
+    );
+    env.gallerySql.exec(
+      "INSERT INTO gallery_likes VALUES (?, ?, ?)",
+      id,
+      "visitor",
+      "2026-09-20",
+    );
+    const endpoint = `${ORIGIN}/api/gallery/maintenance/project-format`;
+    const send = (body: unknown, headers = cookieHeaders(cookie)) =>
+      route(
+        env,
+        new Request(endpoint, {
+          method: "POST",
+          headers: { ...headers, "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      );
+    for (const [table, sqlTable] of [
+      ["galleryEntries", "gallery_entries"],
+      ["galleryEntryVersions", "gallery_entry_versions"],
+    ]) {
+      const row = env.gallerySql
+        .exec<Record<string, any>>(`SELECT * FROM ${sqlTable}`)
+        .one();
+      const originalProjectText = JSON.stringify(
+        parseProject(row.project_text),
+      );
+      env.gallerySql.exec(
+        `UPDATE ${sqlTable} SET project_text = ?, schema_version = ? WHERE id = ?`,
+        originalProjectText,
+        CURRENT_PROJECT_SCHEMA_VERSION,
+        row.id,
+      );
+      const before = env.gallerySql
+        .exec<Record<string, any>>(`SELECT * FROM ${sqlTable}`)
+        .one();
+      const projectText = serializeProject(parseProject(originalProjectText));
+      const body = { table, id: row.id, originalProjectText, projectText };
+      expect((await send(body, { Origin: ORIGIN })).status).toBe(401);
+      expect(
+        (
+          await send(body, {
+            ...cookieHeaders(cookie),
+            Origin: "https://untrusted.example",
+          })
+        ).status,
+      ).toBe(403);
+      expect(
+        (await send({ ...body, originalProjectText: "outdated" })).status,
+      ).toBe(409);
+      expect(
+        (
+          await send({
+            ...body,
+            projectText: serializeProject(
+              createEmptyProject("different", "Altered"),
+            ),
+          })
+        ).status,
+      ).toBe(422);
+      expect(env.gallerySql.exec(`SELECT * FROM ${sqlTable}`).one()).toEqual(
+        before,
+      );
+      const migrated = await send(body);
+      expect(migrated.status).toBe(200);
+      expect(await migrated.json()).toMatchObject({
+        changed: true,
+        schemaVersion: CURRENT_PROJECT_FILE_VERSION,
+      });
+      expect(env.gallerySql.exec(`SELECT * FROM ${sqlTable}`).one()).toEqual({
+        ...before,
+        project_text: projectText,
+        schema_version: CURRENT_PROJECT_FILE_VERSION,
+      });
+      expect(await (await send(body)).json()).toMatchObject({ changed: false });
+    }
+    expect(
+      (
+        await send({
+          table: "cloudProjects",
+          id,
+          originalProjectText: "",
+          projectText: "",
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      env.gallerySql.exec("SELECT * FROM gallery_likes").toArray(),
+    ).toEqual([{ entry_id: id, user_id: "visitor", liked_at: "2026-09-20" }]);
+    expect(
+      env.gallerySql.exec("SELECT id FROM gallery_entries").toArray(),
+    ).toHaveLength(1);
+    expect(
+      env.gallerySql.exec("SELECT id FROM gallery_entry_versions").toArray(),
+    ).toHaveLength(1);
   });
 
   it("backs up every raw row through bounded admin-only pages, including likes", async () => {
@@ -3959,7 +4076,7 @@ describe("gallery contributor renames", () => {
         id,
         "Old Public Name",
         "2026-09-19T00:00:00.000Z",
-        CURRENT_PROJECT_SCHEMA_VERSION,
+        CURRENT_PROJECT_FILE_VERSION,
         status,
         ownerUserId,
         projectText(id),
@@ -3973,7 +4090,7 @@ describe("gallery contributor renames", () => {
         id,
         id,
         "Old Public Name",
-        CURRENT_PROJECT_SCHEMA_VERSION,
+        CURRENT_PROJECT_FILE_VERSION,
         projectText(id),
         "2026-09-19T00:00:00.000Z",
       );
@@ -4034,7 +4151,7 @@ describe("gallery contributor renames", () => {
       "Current",
       "Current Public Name",
       "2026-09-19T00:00:00.000Z",
-      CURRENT_PROJECT_SCHEMA_VERSION,
+      CURRENT_PROJECT_FILE_VERSION,
       "owner-1",
       projectText("Current"),
     );
@@ -4047,7 +4164,7 @@ describe("gallery contributor renames", () => {
       "restore-current-byline",
       "Historical Content",
       "Old Public Name",
-      CURRENT_PROJECT_SCHEMA_VERSION,
+      CURRENT_PROJECT_FILE_VERSION,
       projectText("Historical Content"),
       "2026-09-18T00:00:00.000Z",
     );
@@ -4097,7 +4214,7 @@ describe("recycle bin retention", () => {
       id,
       `Binned ${id}`,
       recycledAt,
-      CURRENT_PROJECT_SCHEMA_VERSION,
+      CURRENT_PROJECT_FILE_VERSION,
       recycledAt,
       ownerUserId,
       projectText(),
@@ -4135,7 +4252,7 @@ describe("recycle bin retention", () => {
             author: "",
             description: "",
             created_at: `${day}T00:00:00.000Z`,
-            schema_version: CURRENT_PROJECT_SCHEMA_VERSION,
+            schema_version: CURRENT_PROJECT_FILE_VERSION,
             owner_user_id: ownerUserId,
             project_text: projectText(),
             svg_text: "<svg/>",

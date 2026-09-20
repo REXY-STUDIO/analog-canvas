@@ -108,7 +108,12 @@ it("keeps a batch preview read-only and enforces the total edit limit", () => {
   expect(f.document).toEqual(before);
   expect(f.commits).toBe(0);
   const limited = fixture(1);
-  expect(limited.submit([limited.wire("a", "R0", "R1")])).toMatchObject({
+  expect(
+    limited.submit([
+      limited.wire("a", "R0", "R1"),
+      limited.wire("b", "R1", "R2"),
+    ]),
+  ).toMatchObject({
     ok: false,
   });
   expect(limited.commits).toBe(0);
