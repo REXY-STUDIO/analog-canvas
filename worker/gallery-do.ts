@@ -1,3 +1,4 @@
+import { formulaPreviewNeedsRefresh } from "./gallery-preview";
 import {
   readGalleryCuration,
   type GalleryAttention,
@@ -1083,10 +1084,10 @@ export class GalleryDO {
       conditions.push(`(${tags.map(() => "e.tags LIKE ?").join(" OR ")})`);
       for (const tag of tags) bindings.push(`%,${tag},%`);
     }
+    const needsAttention =
+      "json_extract(CASE WHEN e.curation_json = '' THEN '{}' ELSE e.curation_json END, '$.attention.status') = 'needs-attention'";
     if (body.attention === true) {
-      conditions.push(
-        "json_extract(CASE WHEN e.curation_json = '' THEN '{}' ELSE e.curation_json END, '$.attention.status') = 'needs-attention'",
-      );
+      conditions.push(needsAttention);
       if (body.isAdmin !== true) {
         conditions.push("e.owner_user_id = ?");
         bindings.push(viewerId);
@@ -1104,15 +1105,28 @@ export class GalleryDO {
     }
     // The whole filtered wall's size, not the page's: counted before the
     // cursor narrows the query, so every page carries the same total.
-    const total = Number(
-      this.sql
-        .exec<{ total: number }>(
-          `SELECT COUNT(*) AS total FROM gallery_entries e
-           WHERE ${conditions.join(" AND ")}`,
-          ...bindings,
-        )
-        .toArray()[0]!.total,
-    );
+    const counts = this.sql
+      .exec<{
+        total: number;
+        attention: number;
+        netlistable: number;
+        liked: number;
+      }>(
+        `SELECT COUNT(*) AS total,
+           COUNT(CASE WHEN e.netlistable = 1 THEN 1 END) AS netlistable,
+           COUNT(CASE WHEN EXISTS (SELECT 1 FROM gallery_likes
+             WHERE entry_id = e.id AND user_id = ?) THEN 1 END) AS liked,
+           COUNT(CASE WHEN ? != '' AND (? = 1 OR e.owner_user_id = ?)
+             AND ${needsAttention} THEN 1 END) AS attention
+         FROM gallery_entries e WHERE ${conditions.join(" AND ")}`,
+        viewerId,
+        viewerId,
+        body.isAdmin === true ? 1 : 0,
+        viewerId,
+        ...bindings,
+      )
+      .toArray()[0]!;
+    const authors = this.contributorCounts(conditions, bindings);
     if (cursor) {
       conditions.push("(e.created_at || '|' || e.id) < ?");
       bindings.push(cursor);
@@ -1147,7 +1161,13 @@ export class GalleryDO {
         ),
       ),
       nextCursor,
-      total,
+      total: Number(counts.total),
+      authors,
+      filterCounts: {
+        attention: Number(counts.attention),
+        netlistable: Number(counts.netlistable),
+        liked: Number(counts.liked),
+      },
     });
   }
 
@@ -1183,6 +1203,16 @@ export class GalleryDO {
       ownerUserId: row.owner_user_id,
       previewRevision: row.preview_revision || "legacy",
       svgText: row.svg_text,
+      ...(formulaPreviewNeedsRefresh(row.svg_text)
+        ? {
+            projectText: this.sql
+              .exec<{ project_text: string }>(
+                "SELECT project_text FROM gallery_entries WHERE id = ?",
+                id,
+              )
+              .one().project_text,
+          }
+        : {}),
     });
   }
 
@@ -2816,26 +2846,34 @@ export class GalleryDO {
 
   /** Public contributors ranked by visible circuits and keyed by identity. */
   private authorCounts(): Response {
+    return Response.json({
+      authors: this.contributorCounts(["e.status = 'public'"], []),
+    });
+  }
+
+  private contributorCounts(
+    conditions: readonly string[],
+    bindings: readonly (string | number)[],
+  ) {
     const rows = this.sql
       .exec<{
         author: string;
         owner_user_id: string | null;
         count: number;
       }>(
-        `SELECT MAX(author) AS author, owner_user_id, COUNT(*) AS count
-         FROM gallery_entries
-         WHERE status = 'public' AND TRIM(author) <> ''
-         GROUP BY COALESCE(NULLIF(owner_user_id, ''), 'legacy:' || author)
+        `SELECT MAX(e.author) AS author, e.owner_user_id, COUNT(*) AS count
+         FROM gallery_entries e
+         WHERE ${conditions.join(" AND ")} AND TRIM(e.author) <> ''
+         GROUP BY COALESCE(NULLIF(e.owner_user_id, ''), 'legacy:' || e.author)
          ORDER BY count DESC, author COLLATE NOCASE ASC, author ASC`,
+        ...bindings,
       )
       .toArray();
-    return Response.json({
-      authors: rows.map((row) => ({
-        author: row.author,
-        ownerUserId: row.owner_user_id,
-        count: Number(row.count),
-      })),
-    });
+    return rows.map((row) => ({
+      author: row.author,
+      ownerUserId: row.owner_user_id,
+      count: Number(row.count),
+    }));
   }
 
   /**

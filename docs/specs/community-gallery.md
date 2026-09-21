@@ -55,15 +55,25 @@ restrictive content-security-policy.
   and tag groups behind a Search & filters button. An empty tag selection result
   does not substitute unfiltered examples.
 - `GET /api/gallery/authors` — non-empty public bylines with their currently
-  visible circuit counts, ranked by count and then author name. The clickable
-  wall count uses this roll-up for its contributor leaderboard; expanding one
-  author lazily reads that author's newest circuits from the ordinary feed and
-  can switch the wall to the existing exact-author filter.
+  visible circuit counts, ranked by count and then author name. This endpoint
+  remains the unfiltered public ranking. The clickable wall count instead uses
+  the `authors` aggregate returned by `GET /api/gallery`: the same author,
+  tags, netlist, liked and authorized Needs attention filters as its cards,
+  counted before pagination. Text search derives contributors from matching
+  loaded cards and marks incomplete counts “so far”. Empty results show no
+  contributors. Selecting an author retains the other active filters.
 - `GET /api/gallery/<id>` — one public entry with its canonical
   `projectText`.
-- `GET /api/gallery/<id>/preview.svg?v=<previewRevision>` — the
+- `GET /api/gallery/<id>/preview.svg?v=<previewRevision>&render=formula-sans-v2` — the
   server-rendered preview. A revision matching the stored SVG is immutable;
   unversioned, stale-revision, hidden, and missing responses are `no-store`.
+  The renderer variant bypasses browser caches of obsolete formula artwork.
+  Old formula placeholders and earlier formula typography are rendered from
+  their stored Project on read, without rewriting publication data, revisions,
+  or history. Hidden-entry authorization still applies, including on edge
+  cache hits. Ordinary previews retain their stored artwork and do not require
+  a Project read. Shelf and historical previews share formula preparation and
+  recovery while retaining their private access rules.
 - Which circuits a reader is looking at — the wall (`view`), the byline
   (`author`), the tags (`tags`), the text (`q`), and the two marks
   (`netlist`, `liked`) — is one preference and persists as one: it rides in
@@ -267,10 +277,14 @@ Owner menu for Edit and replace and Withdraw.
 Reject opens a multi-select form with common reasons (`too ugly`,
 `circuit incorrect`, `too simple`, `duplicate`) and an independent optional
 note/other-reason field. The editor surfaces the full administration lifecycle
-at `/moderation` (rejected entries, recycle bin, plus admin-only moderator
-appointment) and the submitter's view at `/mine` (status chips, rejection
+at `/moderation` (full-width masonry for rejected entries and the recycle bin)
+and the submitter's view at `/mine` (status chips, rejection
 reason, owner-visible preview, open-in-editor). Every gallery page state wears
-the shared site chrome.
+the shared site chrome. Moderation cards open the circuit normally; their
+bottom ellipsis menu contains Restore to Gallery and Move to recycle bin
+(or confirmed Delete forever for recycled entries). Moderator appointment,
+schema convergence, and netlist-mark maintenance have no product forms;
+authorized operator scripts use the existing admin-only APIs.
 
 ## Owner editing
 

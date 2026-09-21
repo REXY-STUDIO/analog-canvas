@@ -1,4 +1,3 @@
-import { GalleryAttentionReview } from "./gallery-attention-review";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { TilePreview } from "./tile-preview";
 import "../styles/gallery-entry.css";
@@ -6,6 +5,8 @@ import "../styles/gallery-entry.css";
 import {
   announceGalleryChange,
   galleryCountLabel,
+  galleryAuthorsOf,
+  removeGalleryAuthorEntry,
   galleryEntryMatchesQuery,
   galleryPreviewUrl,
   loadGalleryAuthors,
@@ -53,6 +54,11 @@ import type { GalleryDuplicateReport } from "../gallery-duplicates";
 
 const ShelfWall = lazy(() =>
   import("./shelf-wall").then((module) => ({ default: module.ShelfWall })),
+);
+const GalleryAttentionReview = lazy(() =>
+  import("./gallery-attention-review").then((module) => ({
+    default: module.GalleryAttentionReview,
+  })),
 );
 const GalleryDuplicateCheck = lazy(() =>
   import("./gallery-duplicate-check").then((module) => ({
@@ -308,10 +314,12 @@ function contributionLabel(count: number): string {
 function GalleryContributorRow({
   option,
   rank,
+  partial,
   onSelectAuthor,
 }: {
   option: GalleryAuthorOption;
   rank: number;
+  partial: boolean;
   onSelectAuthor: (option: GalleryAuthorOption) => void;
 }) {
   return (
@@ -331,6 +339,7 @@ function GalleryContributorRow({
       </button>
       <span className="gallery-contributor-count">
         {contributionLabel(option.count)}
+        {partial ? " so far" : ""}
       </span>
     </li>
   );
@@ -340,54 +349,25 @@ export function GalleryCountPanel({
   total,
   filtered = false,
   search = null,
-  refreshSignal = 0,
+  authors = [],
+  partial = false,
   onSelectAuthor = () => undefined,
 }: {
   total: number | null;
   filtered?: boolean;
   search?: { visible: number; settled: boolean } | null;
-  refreshSignal?: number;
+  authors?: GalleryAuthorOption[];
+  partial?: boolean;
   onSelectAuthor?: (option: GalleryAuthorOption) => void;
 }) {
   const label = galleryCountLabel(total, { filtered, search });
   const rootRef = useRef<HTMLDetailsElement | null>(null);
-  const requestGenerationRef = useRef(0);
-  const revision = `${refreshSignal}:${total ?? "unknown"}`;
-  const [contributors, setContributors] = useState<{
-    status: "idle" | "loading" | "ready" | "unavailable";
-    authors: GalleryAuthorOption[];
-    revision: string;
-  }>({ status: "idle", authors: [], revision });
-  const contributorStatus =
-    contributors.revision === revision ? contributors.status : "idle";
-  const contributorAuthors =
-    contributors.revision === revision ? contributors.authors : [];
-
-  function loadContributors(): void {
-    if (contributorStatus === "loading" || contributorStatus === "ready") {
-      return;
-    }
-    const generation = ++requestGenerationRef.current;
-    setContributors({ status: "loading", authors: [], revision });
-    void loadGalleryAuthors(fetch).then((authors) => {
-      if (generation !== requestGenerationRef.current) return;
-      setContributors(
-        authors === null
-          ? { status: "unavailable", authors: [], revision }
-          : { status: "ready", authors, revision },
-      );
-    });
-  }
-
   if (label === null) return null;
   return (
     <details
       ref={rootRef}
       className="gallery-contributor-menu"
       data-testid="gallery-contributor-menu"
-      onToggle={(event) => {
-        if (event.currentTarget.open) loadContributors();
-      }}
     >
       <summary
         className="gallery-count-panel"
@@ -402,31 +382,26 @@ export function GalleryCountPanel({
       >
         <div className="gallery-contributor-heading">
           <strong>Contributors</strong>
-          {contributorStatus === "ready" ? (
-            <span>
-              {contributorAuthors.length.toLocaleString()}{" "}
-              {contributorAuthors.length === 1 ? "author" : "authors"}
-            </span>
-          ) : null}
+          <span>
+            {authors.length.toLocaleString()}{" "}
+            {authors.length === 1 ? "author" : "authors"}
+            {partial ? " so far" : ""}
+          </span>
         </div>
-        {contributorStatus === "loading" || contributorStatus === "idle" ? (
-          <p className="gallery-contributor-status">Loading contributors…</p>
-        ) : contributorStatus === "unavailable" ? (
-          <div className="gallery-contributor-status">
-            <p>Could not load contributors.</p>
-            <button type="button" onClick={loadContributors}>
-              Try again
-            </button>
-          </div>
-        ) : contributorAuthors.length === 0 ? (
-          <p className="gallery-contributor-status">No contributors yet.</p>
+        {authors.length === 0 ? (
+          <p className="gallery-contributor-status">
+            {partial
+              ? "No matching contributors in circuits loaded so far."
+              : "No contributors match the current filters."}
+          </p>
         ) : (
           <ol className="gallery-contributor-list">
-            {contributorAuthors.map((option, index) => (
+            {authors.map((option, index) => (
               <GalleryContributorRow
-                key={`${refreshSignal}:${total}:${option.ownerUserId ?? "legacy"}:${option.author}`}
+                key={`${option.ownerUserId ?? "legacy"}:${option.author}`}
                 option={option}
                 rank={index + 1}
+                partial={partial}
                 onSelectAuthor={(option) => {
                   rootRef.current?.removeAttribute("open");
                   onSelectAuthor(option);
@@ -675,18 +650,52 @@ export function GalleryFeed({
       likedByViewer?: boolean;
     } | null;
     if (!result) return;
-    setState((previous) => ({
-      ...previous,
-      entries: previous.entries.map((entry): GalleryFeedEntry =>
-        entry.id === entryId
+    setState((previous) => {
+      const entry = previous.entries.find((item) => item.id === entryId);
+      if (!entry) return previous;
+      const liked = result.likedByViewer === true;
+      const removed = likedOnly && !liked;
+      return {
+        ...previous,
+        entries: removed
+          ? previous.entries.filter((item) => item.id !== entryId)
+          : previous.entries.map((item): GalleryFeedEntry =>
+              item.id === entryId
+                ? {
+                    ...item,
+                    likes: result.likes ?? item.likes ?? 0,
+                    likedByViewer: liked,
+                  }
+                : item,
+            ),
+        total:
+          removed && previous.total !== null
+            ? previous.total - 1
+            : previous.total,
+        ...(removed && previous.authors
+          ? { authors: removeGalleryAuthorEntry(previous.authors, entry) }
+          : {}),
+        ...(previous.filterCounts
           ? {
-              ...entry,
-              likes: result.likes ?? entry.likes ?? 0,
-              likedByViewer: result.likedByViewer === true,
+              filterCounts: {
+                attention:
+                  previous.filterCounts.attention -
+                  Number(
+                    removed && entry.attention?.status === "needs-attention",
+                  ),
+                netlistable:
+                  previous.filterCounts.netlistable -
+                  Number(removed && entry.netlistable === true),
+                liked:
+                  previous.filterCounts.liked +
+                  Number(liked) -
+                  Number(entry.likedByViewer === true),
+              },
             }
-          : entry,
-      ),
-    }));
+          : {}),
+      };
+    });
+    announceGalleryChange({ entryId });
   }
 
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -795,6 +804,10 @@ export function GalleryFeed({
                 entries: [...previous.entries, ...page.entries],
                 nextCursor: page.nextCursor,
                 total: page.total ?? previous.total,
+                ...(page.authors ? { authors: page.authors } : {}),
+                ...(page.filterCounts
+                  ? { filterCounts: page.filterCounts }
+                  : {}),
               }
             : previous,
         );
@@ -823,8 +836,6 @@ export function GalleryFeed({
     updateFilters({
       author: option.author,
       ownerUserId: option.ownerUserId ?? null,
-      tags: [],
-      search: "",
     });
   }
 
@@ -844,6 +855,24 @@ export function GalleryFeed({
         (candidate) => candidate.id !== entry.id,
       ),
       total: previous.total === null ? null : previous.total - 1,
+      ...(previous.authors
+        ? { authors: removeGalleryAuthorEntry(previous.authors, entry) }
+        : {}),
+      ...(previous.filterCounts
+        ? {
+            filterCounts: {
+              attention:
+                previous.filterCounts.attention -
+                Number(entry.attention?.status === "needs-attention"),
+              netlistable:
+                previous.filterCounts.netlistable -
+                Number(entry.netlistable === true),
+              liked:
+                previous.filterCounts.liked -
+                Number(entry.likedByViewer === true),
+            },
+          }
+        : {}),
     }));
     const removedTags = new Set(entry.tags ?? []);
     if (removedTags.size > 0) {
@@ -933,6 +962,35 @@ export function GalleryFeed({
         galleryEntryMatchesQuery(entry, normalizedSearchQuery),
       )
     : entries;
+  const localAuthors = Boolean(normalizedSearchQuery) || !state.authors;
+  const authors = localAuthors
+    ? galleryAuthorsOf(visibleEntries)
+    : state.authors!;
+  const localQuickCounts = normalizedSearchQuery || !state.filterCounts;
+  const quickCounts = localQuickCounts
+    ? {
+        attention: visibleEntries.filter(
+          (entry) => entry.attention?.status === "needs-attention",
+        ).length,
+        netlistable: visibleEntries.filter((entry) => entry.netlistable).length,
+        liked: visibleEntries.filter((entry) => entry.likedByViewer).length,
+      }
+    : state.filterCounts!;
+  const quickCountsPartial = localQuickCounts && state.nextCursor !== null;
+  const quickCount = (key: keyof typeof quickCounts) => (
+    <span
+      className="gallery-sidebar-count"
+      title={
+        quickCountsPartial ? "Matches in circuits loaded so far" : undefined
+      }
+    >
+      {state.status === "loading"
+        ? "…"
+        : state.status === "unavailable"
+          ? "—"
+          : `${quickCounts[key].toLocaleString()}${quickCountsPartial ? "+" : ""}`}
+    </span>
+  );
   const duplicates = new Map(
     duplicateReport?.groups.flatMap((group, index) =>
       group.map(
@@ -987,7 +1045,8 @@ export function GalleryFeed({
           <GalleryCountPanel
             total={state.total}
             filtered={galleryFiltersNarrowQuery(filters)}
-            refreshSignal={refreshSignal}
+            authors={authors}
+            partial={localAuthors && state.nextCursor !== null}
             onSelectAuthor={selectContributor}
             search={
               normalizedSearchQuery
@@ -1033,7 +1092,10 @@ export function GalleryFeed({
                     onClick={() => updateFilters({ attention: !attentionOnly })}
                     data-testid="gallery-filter-attention"
                   >
-                    Needs attention{signedIn && !isOwner ? " · Mine" : ""}
+                    <span>
+                      Needs attention{signedIn && !isOwner ? " · Mine" : ""}
+                    </span>
+                    {quickCount("attention")}
                   </button>
                 ) : null}
                 <button
@@ -1054,7 +1116,8 @@ export function GalleryFeed({
                     updateFilters({ netlistable: !netlistableOnly })
                   }
                 >
-                  <NetlistIcon /> With netlist
+                  <NetlistIcon /> <span>With netlist</span>
+                  {quickCount("netlistable")}
                 </button>
                 {signedIn || likedOnly ? (
                   <button
@@ -1073,7 +1136,8 @@ export function GalleryFeed({
                     }
                     onClick={() => updateFilters({ liked: !likedOnly })}
                   >
-                    <HeartIcon filled={true} /> Liked
+                    <HeartIcon filled={true} /> <span>Liked</span>
+                    {quickCount("liked")}
                   </button>
                 ) : null}
               </>
@@ -1254,19 +1318,21 @@ export function GalleryFeed({
                           </a>
                           {isOwner ||
                           (!!viewerId && viewerId === entry.ownerUserId) ? (
-                            <GalleryAttentionReview
-                              entry={entry}
-                              onChange={(updated) => {
-                                setState((previous) => ({
-                                  ...previous,
-                                  entries: previous.entries.map((item) =>
-                                    item.id === updated.id ? updated : item,
-                                  ),
-                                }));
-                                setRefreshSignal((signal) => signal + 1);
-                                announceGalleryChange({ entryId: entry.id });
-                              }}
-                            />
+                            <Suspense fallback={null}>
+                              <GalleryAttentionReview
+                                entry={entry}
+                                onChange={(updated) => {
+                                  setState((previous) => ({
+                                    ...previous,
+                                    entries: previous.entries.map((item) =>
+                                      item.id === updated.id ? updated : item,
+                                    ),
+                                  }));
+                                  setRefreshSignal((signal) => signal + 1);
+                                  announceGalleryChange({ entryId: entry.id });
+                                }}
+                              />
+                            </Suspense>
                           ) : null}
                           {isOwner ? (
                             <>

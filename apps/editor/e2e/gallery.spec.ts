@@ -7,7 +7,6 @@ import {
   createEmptyDocument,
   createRoutePath,
   createEmptyProject,
-  CURRENT_PROJECT_SCHEMA_VERSION,
 } from "@icm/model";
 import {
   serializeProject,
@@ -927,7 +926,10 @@ test("the site lands on the full-screen gallery feed", async ({ page }) => {
   await expect(page.getByTestId(`gallery-tile-${ENTRY.id}`)).toBeVisible();
   await expect(
     page.getByTestId(`gallery-tile-${ENTRY.id}`).locator("img"),
-  ).toHaveAttribute("src", `/api/gallery/${ENTRY.id}/preview.svg?v=revision-0`);
+  ).toHaveAttribute(
+    "src",
+    `/api/gallery/${ENTRY.id}/preview.svg?v=revision-0&render=formula-sans-v2`,
+  );
   await expect(
     page.getByTestId(`gallery-tile-${ENTRY.id}`).locator("img"),
   ).toHaveAttribute("width", "640");
@@ -980,7 +982,7 @@ test("an open Gallery switches to a newly published preview revision", async ({
   const image = page.getByTestId(`gallery-tile-${ENTRY.id}`).locator("img");
   await expect(image).toHaveAttribute(
     "src",
-    `/api/gallery/${ENTRY.id}/preview.svg?v=revision-0`,
+    `/api/gallery/${ENTRY.id}/preview.svg?v=revision-0&render=formula-sans-v2`,
   );
 
   previewRevision = "revision-1";
@@ -997,7 +999,7 @@ test("an open Gallery switches to a newly published preview revision", async ({
 
   await expect(image).toHaveAttribute(
     "src",
-    `/api/gallery/${ENTRY.id}/preview.svg?v=revision-1`,
+    `/api/gallery/${ENTRY.id}/preview.svg?v=revision-1&render=formula-sans-v2`,
   );
   expect(listRequests).toBeGreaterThanOrEqual(2);
 });
@@ -1373,6 +1375,197 @@ test("narrows the wall by netlist mark and by the reader's own likes", async ({
   await page.getByTestId("gallery-filter-netlistable").click();
   await expect(page.getByTestId("gallery-tile-f-sketch")).toBeVisible();
   await expect(page.getByTestId("gallery-tile-f-ready")).toHaveCount(0);
+});
+
+test("quick filters show right-aligned counts and follow filters, search and likes", async ({
+  page,
+}) => {
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: {
+        user: {
+          id: "reader",
+          displayName: "Reader",
+          email: "reader@example.com",
+          provider: "github",
+          role: "user",
+          isAdmin: true,
+        },
+      },
+    }),
+  );
+  let entries = [
+    {
+      ...ENTRY,
+      id: "count-amp",
+      author: "Alice",
+      ownerUserId: "owner-a",
+      name: "Amplifier",
+      tags: ["amplifier"],
+      netlistable: true,
+      likedByViewer: true,
+      attention: { status: "needs-attention", issues: [] },
+    },
+    {
+      ...ENTRY,
+      id: "count-osc",
+      author: "Bob",
+      ownerUserId: "owner-b",
+      name: "Oscillator",
+      tags: ["oscillator"],
+      netlistable: true,
+      likedByViewer: false,
+      attention: undefined,
+    },
+    {
+      ...ENTRY,
+      id: "count-comp",
+      author: "Carol",
+      ownerUserId: "owner-c",
+      name: "Comparator",
+      tags: ["comparator"],
+      netlistable: false,
+      likedByViewer: true,
+      attention: { status: "needs-attention", issues: [] },
+    },
+  ];
+  await page.route("**/api/gallery**", (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/like")) {
+      const id = url.pathname.split("/")[3];
+      entries = entries.map((entry) =>
+        entry.id === id
+          ? { ...entry, likedByViewer: !entry.likedByViewer }
+          : entry,
+      );
+      return route.fulfill({ json: { likes: 0, likedByViewer: false } });
+    }
+    if (url.pathname === "/api/gallery/tags")
+      return route.fulfill({
+        json: {
+          tags: [{ tag: "amplifier", count: 1 }],
+          groups: [{ group: "Amplifiers", count: 1 }],
+        },
+      });
+    if (url.pathname.endsWith("/preview.svg"))
+      return route.fulfill({
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 6"/>',
+      });
+    if (url.pathname !== "/api/gallery") return route.fallback();
+    const filtered = entries.filter(
+      (entry) =>
+        (url.searchParams.get("netlistable") !== "1" || entry.netlistable) &&
+        (url.searchParams.get("liked") !== "1" || entry.likedByViewer) &&
+        (url.searchParams.get("attention") !== "1" || entry.attention) &&
+        (!url.searchParams.get("tags") ||
+          entry.tags.includes(url.searchParams.get("tags")!)),
+    );
+    return route.fulfill({
+      json: {
+        entries: filtered,
+        nextCursor: null,
+        total: filtered.length,
+        authors: filtered.map((entry) => ({
+          author: entry.author,
+          ownerUserId: entry.ownerUserId,
+          count: 1,
+        })),
+        filterCounts: {
+          attention: filtered.filter((entry) => entry.attention).length,
+          netlistable: filtered.filter((entry) => entry.netlistable).length,
+          liked: filtered.filter((entry) => entry.likedByViewer).length,
+        },
+      },
+    });
+  });
+  await page.goto("/");
+  const attention = page.getByTestId("gallery-filter-attention");
+  const netlist = page.getByTestId("gallery-filter-netlistable");
+  const liked = page.getByTestId("gallery-filter-liked");
+  const counts = async (a: string, n: string, l: string) => {
+    await expect(attention.locator(".gallery-sidebar-count")).toHaveText(a);
+    await expect(netlist.locator(".gallery-sidebar-count")).toHaveText(n);
+    await expect(liked.locator(".gallery-sidebar-count")).toHaveText(l);
+  };
+  const contributors = async (names: string[]) => {
+    const menu = page.getByTestId("gallery-contributor-menu");
+    if (!(await menu.evaluate((node) => node.hasAttribute("open"))))
+      await page.getByTestId("gallery-count-panel").click();
+    await expect(menu.locator(".gallery-contributor-author")).toHaveText(names);
+    await expect(menu.locator(".gallery-contributor-heading")).toContainText(
+      `${names.length} ${names.length === 1 ? "author" : "authors"}`,
+    );
+  };
+  await counts("2", "2", "2");
+  await contributors(["Alice", "Bob", "Carol"]);
+  await netlist.click();
+  await counts("1", "2", "1");
+  await contributors(["Alice", "Bob"]);
+  await attention.click();
+  await counts("1", "1", "1");
+  await contributors(["Alice"]);
+  await netlist.click();
+  await counts("2", "1", "2");
+  await contributors(["Alice", "Carol"]);
+  await attention.click();
+  const search = page.getByTestId("gallery-search");
+  await search.fill("Oscillator");
+  await counts("0", "1", "0");
+  await contributors(["Bob"]);
+  await search.fill("nothing-matches");
+  await contributors([]);
+  await search.fill("Amplifier");
+  await contributors(["Alice"]);
+  await search.fill("");
+  await counts("2", "2", "2");
+  await page
+    .getByRole("button", { name: "Expand Amplifiers", exact: true })
+    .click();
+  await page.getByTestId("gallery-tag-option-amplifier").click();
+  await counts("1", "1", "1");
+  await contributors(["Alice"]);
+  await page.getByTestId("gallery-tags-clear").click();
+  await counts("2", "2", "2");
+  await liked.click();
+  await counts("2", "1", "2");
+  await page.getByTestId("gallery-like-count-amp").click();
+  await counts("1", "0", "1");
+  await contributors(["Carol"]);
+  await expect(page.getByTestId("gallery-tile-count-amp")).toHaveCount(0);
+  await netlist.click();
+  await counts("0", "0", "0");
+  await contributors([]);
+  await expect(page.getByTestId("gallery-contributor-popover")).toContainText(
+    "No contributors match the current filters.",
+  );
+
+  const sidebar = page.getByRole("separator", {
+    name: "Resize Gallery filters",
+  });
+  await sidebar.focus();
+  await page.keyboard.press("Home");
+  const edges = await Promise.all(
+    [attention, netlist, liked].map((button) =>
+      button.evaluate((node) => {
+        const count = node
+          .querySelector(".gallery-sidebar-count")!
+          .getBoundingClientRect();
+        const label = node.querySelector("span")!.getBoundingClientRect();
+        const bounds = node.getBoundingClientRect();
+        return {
+          right: count.right,
+          inside: count.right <= bounds.right,
+          separated: label.right <= count.left,
+        };
+      }),
+    ),
+  );
+  expect(edges.every((edge) => edge.inside && edge.separated)).toBe(true);
+  expect(
+    Math.max(...edges.map((edge) => edge.right)) -
+      Math.min(...edges.map((edge) => edge.right)),
+  ).toBeLessThan(1);
 });
 
 test("netlist filter updates category and tag counts and ignores a late summary", async ({
@@ -2202,6 +2395,7 @@ test("the wall count opens a contributor ranking whose names open each gallery",
       id: "alice-2",
       name: "Alice OTA",
       author: "Alice",
+      tags: ["amplifier"],
       createdAt: "2026-08-22T10:00:00.000Z",
     },
     {
@@ -2209,6 +2403,7 @@ test("the wall count opens a contributor ranking whose names open each gallery",
       id: "alice-1",
       name: "Alice Bandgap",
       author: "Alice",
+      tags: ["amplifier"],
     },
   ];
   const bobEntry = {
@@ -2216,6 +2411,7 @@ test("the wall count opens a contributor ranking whose names open each gallery",
     id: "bob-1",
     name: "Bob Comparator",
     author: "Bob",
+    tags: ["amplifier"],
   };
   await page.route(galleryListUrl, (route) => {
     const url = new URL(route.request().url());
@@ -2247,7 +2443,7 @@ test("the wall count opens a contributor ranking whose names open each gallery",
     }),
   );
 
-  await page.goto("/");
+  await page.goto("/?tags=amplifier&q=amplifier");
   await page.getByTestId("gallery-count-panel").click();
   await expect(page.getByTestId("gallery-contributor-popover")).toContainText(
     "2 authors",
@@ -2268,12 +2464,98 @@ test("the wall count opens a contributor ranking whose names open each gallery",
   await expect(page.getByTestId("gallery-contributor-view-1")).toHaveCount(0);
   await page.getByTestId("gallery-contributor-author-1").click();
 
-  await expect(page).toHaveURL(/\?author=Alice$/u);
+  await expect(page).toHaveURL(
+    (url) =>
+      url.searchParams.get("author") === "Alice" &&
+      url.searchParams.get("tags") === "amplifier" &&
+      url.searchParams.get("q") === "amplifier",
+  );
   await expect(page.getByTestId("gallery-filter")).toContainText(
     "Circuits by Alice",
   );
   await expect(page.getByTestId("gallery-tile-alice-2")).toBeVisible();
   await expect(page.getByTestId("gallery-tile-bob-1")).toHaveCount(0);
+  await page.getByTestId("gallery-count-panel").click();
+  await expect(page.getByTestId("gallery-contributor-popover")).toContainText(
+    "1 author",
+  );
+  await expect(page.locator(".gallery-contributor-author")).toHaveText([
+    "Alice",
+  ]);
+});
+
+test("contributors cover filtered pages while text search follows only matching cards", async ({
+  page,
+}) => {
+  let pending: Route | undefined;
+  let globalRequests = 0;
+  const authors = [
+    { author: "Alice", count: 2 },
+    { author: "Bob", count: 1 },
+  ];
+  await page.route(galleryListUrl, (route) => {
+    if (new URL(route.request().url()).searchParams.has("cursor")) {
+      pending = route;
+      return;
+    }
+    return route.fulfill({
+      json: {
+        entries: [{ ...ENTRY, id: "alice-1", author: "Alice" }],
+        total: 3,
+        nextCursor: "next",
+        authors,
+      },
+    });
+  });
+  await page.route("**/api/gallery/authors", (route) => {
+    globalRequests++;
+    return route.fulfill({
+      json: { authors: [{ author: "Unrelated", count: 97 }] },
+    });
+  });
+  await page.route("**/api/gallery/tags*", (route) =>
+    route.fulfill({ json: { tags: [] } }),
+  );
+  await page.route("**/api/gallery/*/preview.svg*", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"/>',
+    }),
+  );
+  await page.goto("/?netlist=1");
+  await page.getByTestId("gallery-count-panel").click();
+  const popover = page.getByTestId("gallery-contributor-popover");
+  await expect(popover.locator(".gallery-contributor-author")).toHaveText([
+    "Alice",
+    "Bob",
+  ]);
+  await expect(popover.locator(".gallery-contributor-count")).toHaveText([
+    "2 circuits",
+    "1 circuit",
+  ]);
+  await page.getByTestId("gallery-search").fill("Bob");
+  await expect(popover).toContainText("0 authors so far");
+  await expect(popover.locator(".gallery-contributor-row")).toHaveCount(0);
+  await expect.poll(() => Boolean(pending)).toBe(true);
+  await pending!.fulfill({
+    json: {
+      entries: [
+        { ...ENTRY, id: "bob-1", author: "Bob" },
+        { ...ENTRY, id: "alice-2", author: "Alice" },
+      ],
+      total: 3,
+      nextCursor: null,
+      authors,
+    },
+  });
+  await expect(popover.locator(".gallery-contributor-author")).toHaveText([
+    "Bob",
+  ]);
+  await expect(popover.locator(".gallery-contributor-count")).toHaveText([
+    "1 circuit",
+  ]);
+  await expect(popover).not.toContainText("so far");
+  expect(globalRequests).toBe(0);
 });
 
 test("an API without totals hides the count rather than guessing", async ({
@@ -2413,6 +2695,7 @@ test("the admin recycle bin restores a recycled entry", async ({ page }) => {
 
   await page.goto("/moderation");
   await expect(page.getByTestId("bin-card-bin-1")).toBeVisible();
+  await page.getByTestId("bin-menu-bin-1").locator("summary").click();
   await page.getByTestId("bin-restore-bin-1").click();
   await expect(page.getByTestId("bin-empty")).toBeVisible();
   expect(restored).toBe(1);
@@ -2487,23 +2770,33 @@ test("the Owner restores rejected work or moves it through the bin before deleti
     page.getByTestId("rejected-card-rejected-restore"),
   ).toContainText("Remove the loose wire");
   await expect(
-    page.getByTestId("rejected-edit-rejected-restore"),
+    page.getByTestId("rejected-open-rejected-restore"),
   ).toHaveAttribute("href", "/g/rejected-restore");
+  await page
+    .getByTestId("rejected-menu-rejected-restore")
+    .locator("summary")
+    .click();
   await page.getByTestId("rejected-restore-rejected-restore").click();
   await expect(page.getByTestId("rejected-card-rejected-restore")).toHaveCount(
     0,
   );
 
+  await page
+    .getByTestId("rejected-menu-rejected-delete")
+    .locator("summary")
+    .click();
   await page.getByTestId("rejected-recycle-rejected-delete").click();
   await expect(page.getByTestId("rejected-empty")).toBeVisible();
   await expect(page.getByTestId("bin-card-rejected-delete")).toBeVisible();
 
   page.once("dialog", (dialog) => void dialog.dismiss());
+  await page.getByTestId("bin-menu-rejected-delete").locator("summary").click();
   await page.getByTestId("bin-delete-rejected-delete").click();
   expect(deleted).toBe(0);
   await expect(page.getByTestId("bin-card-rejected-delete")).toBeVisible();
 
   page.once("dialog", (dialog) => void dialog.accept());
+  await page.getByTestId("bin-menu-rejected-delete").locator("summary").click();
   await page.getByTestId("bin-delete-rejected-delete").click();
   await expect(page.getByTestId("bin-empty")).toBeVisible();
   expect(deleted).toBe(1);
@@ -3097,17 +3390,15 @@ test("the publish dialog resolves internal Cell instances from the open Project"
   await expect(dialog.getByRole("button", { name: "Publish" })).toBeEnabled();
 });
 
-test("post-publication moderation has rejected work but no approval queue", async ({
+test("post-publication moderation contains collections without operational maintenance forms", async ({
   page,
 }) => {
-  const convergenceCalls: boolean[] = [];
   await page.route("**/api/auth/me", (route) =>
     route.fulfill({
       json: {
         user: {
           id: "u1",
-          displayName: "Token Zhang",
-          email: "owner@example.com",
+          displayName: "Owner",
           provider: "github",
           role: "user",
           isAdmin: true,
@@ -3121,61 +3412,174 @@ test("post-publication moderation has rejected work but no approval queue", asyn
   await page.route("**/api/gallery/rejected", (route) =>
     route.fulfill({ json: { entries: [] } }),
   );
-  await page.route(
-    "**/api/gallery/maintenance/schema-current",
-    async (route) => {
-      const body = route.request().postDataJSON() as { apply?: boolean };
-      convergenceCalls.push(body.apply === true);
-      await route.fulfill({
-        json: {
-          applied: body.apply === true,
-          targetSchemaVersion: CURRENT_PROJECT_SCHEMA_VERSION,
-          inventory: {
-            gallery_entries: {
-              [String(CURRENT_PROJECT_SCHEMA_VERSION - 1)]: 3,
-            },
-            gallery_entry_versions: {
-              [String(CURRENT_PROJECT_SCHEMA_VERSION - 1)]: 1,
-            },
-            cloud_projects: {
-              [String(CURRENT_PROJECT_SCHEMA_VERSION - 1)]: 1,
-            },
-          },
-          records: 5,
-          ready: 5,
-          failures: [],
-        },
-      });
-    },
-  );
-
+  const maintenance: string[] = [];
+  page.on("request", (request) => {
+    if (/\/maintenance\/|\/auth\/users\/role/.test(request.url()))
+      maintenance.push(request.url());
+  });
   await page.goto("/moderation");
   await expect(page.getByTestId("moderation")).toBeVisible();
-  await page.getByTestId("owner-settings").locator("summary").click();
-  await expect(page.getByTestId("schema-backup-download")).toHaveAttribute(
-    "href",
-    "/api/gallery/maintenance/schema-backup",
-  );
-  await expect(page.getByTestId("schema-current-apply")).toBeDisabled();
-  await page.getByTestId("schema-current-dry-run").click();
-  await expect(page.getByTestId("schema-current-report")).toContainText(
-    `Validated: 5/5 records ready for schema ${CURRENT_PROJECT_SCHEMA_VERSION}; 0 failures.`,
-  );
-  await expect(page.getByTestId("schema-current-report")).toContainText(
-    `gallery_entries: v${CURRENT_PROJECT_SCHEMA_VERSION - 1}=3`,
-  );
-  await expect(page.getByTestId("schema-current-apply")).toBeDisabled();
-  await page.getByTestId("schema-current-backup-confirmed").check();
-  await page.getByTestId("schema-current-apply").click();
-  await expect(page.getByTestId("schema-current-report")).toContainText(
-    `Applied: 5/5 records ready for schema ${CURRENT_PROJECT_SCHEMA_VERSION}; 0 failures.`,
-  );
-  expect(convergenceCalls).toEqual([false, true]);
-  // Curation is post-publication: rejected work and a bin, never an inbox.
   await expect(page.getByTestId("rejected-empty")).toBeVisible();
   await expect(page.getByTestId("bin-empty")).toBeVisible();
+  await expect(page.getByTestId("owner-settings")).toHaveCount(0);
+  await expect(page.getByRole("textbox")).toHaveCount(0);
+  await expect(page.getByText("Project schema maintenance")).toHaveCount(0);
+  await expect(page.getByText("Netlist marks", { exact: true })).toHaveCount(0);
   await expect(page.getByTestId("review-empty")).toHaveCount(0);
-  await expect(page.getByText("Nothing waiting for review")).toHaveCount(0);
+  expect(maintenance).toEqual([]);
+});
+
+test("moderation uses full-width responsive masonry and keyboard-accessible card actions", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: {
+        user: {
+          id: "u1",
+          displayName: "Owner",
+          provider: "github",
+          role: "user",
+          isAdmin: true,
+        },
+      },
+    }),
+  );
+  const entries = Array.from({ length: 12 }, (_, index) => ({
+    ...ENTRY,
+    id: `review-${index}`,
+    name: `Amplifier ${index}`,
+    rejectReason:
+      index % 2
+        ? "Check the output connection."
+        : "Two overlapping transistors near the output. Verify the intended topology before restoring this circuit.",
+    previewWidth: 400,
+    previewHeight: index % 3 ? 240 : 400,
+  }));
+  await page.route("**/api/gallery/rejected", (route) =>
+    route.fulfill({ json: { entries } }),
+  );
+  await page.route("**/api/gallery/recycled", (route) =>
+    route.fulfill({ json: { entries: [] } }),
+  );
+  await page.route("**/preview.svg*", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 240"><path d="M20 120h80l20 -25 30 50 30 -50 30 50 20 -25h140" stroke="black" fill="none"/></svg>',
+    }),
+  );
+  await page.goto("/moderation");
+  const cards = page.locator('[data-testid^="rejected-card-"]');
+  await expect(cards).toHaveCount(12);
+  const masonry = page.getByLabel("Rejected circuits");
+  await expect
+    .poll(async () => (await masonry.boundingBox())!.width)
+    .toBeGreaterThan(1500);
+  const columns = () =>
+    cards.evaluateAll(
+      (nodes) =>
+        new Set(nodes.map((node) => Math.round(node.getBoundingClientRect().x)))
+          .size,
+    );
+  await expect.poll(columns).toBe(5);
+  await expect(page.getByText("Edit and replace", { exact: true })).toHaveCount(
+    0,
+  );
+  await expect(page.getByTestId("rejected-open-review-0")).toHaveAttribute(
+    "href",
+    "/g/review-0",
+  );
+  const menu = page.getByTestId("rejected-menu-review-0");
+  const trigger = menu.locator("summary");
+  await expect(page.getByTestId("rejected-restore-review-0")).toBeHidden();
+  await trigger.focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(page.getByTestId("rejected-restore-review-0")).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(page.getByTestId("rejected-recycle-review-0")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(trigger).toBeFocused();
+  await expect(page.getByTestId("rejected-restore-review-0")).toBeHidden();
+  await page.keyboard.press("ArrowUp");
+  await expect(page.getByTestId("rejected-recycle-review-0")).toBeFocused();
+  await page.keyboard.press("Home");
+  await expect(page.getByTestId("rejected-restore-review-0")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await trigger.click();
+  await page.getByRole("heading", { name: "Rejected entries" }).click();
+  await expect(page.getByTestId("rejected-restore-review-0")).toBeHidden();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(columns).toBe(1);
+  await trigger.click();
+  const popover = await menu.getByRole("menu").boundingBox();
+  expect(popover!.x).toBeGreaterThanOrEqual(0);
+  expect(popover!.x + popover!.width).toBeLessThanOrEqual(390);
+  await expect
+    .poll(() =>
+      page
+        .locator(".review-shell")
+        .evaluate((el) => el.scrollWidth <= el.clientWidth),
+    )
+    .toBe(true);
+});
+
+test("moderation keeps failed actions visible and retries collection loading", async ({
+  page,
+}) => {
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: {
+        user: {
+          id: "u1",
+          displayName: "Owner",
+          provider: "github",
+          role: "user",
+          isAdmin: true,
+        },
+      },
+    }),
+  );
+  let loadFailed = true;
+  let restoreFailed = true;
+  let restored = false;
+  await page.route("**/api/gallery/rejected", (route) =>
+    loadFailed
+      ? route.fulfill({ status: 503, json: {} })
+      : route.fulfill({
+          json: { entries: restored ? [] : [{ ...ENTRY, id: "retry-entry" }] },
+        }),
+  );
+  await page.route("**/api/gallery/recycled", (route) =>
+    route.fulfill({ json: { entries: [] } }),
+  );
+  await page.route("**/api/gallery/retry-entry/restore", (route) => {
+    if (restoreFailed) return route.fulfill({ status: 503, json: {} });
+    restored = true;
+    return route.fulfill({ json: { id: "retry-entry", status: "public" } });
+  });
+  await page.goto("/moderation");
+  await expect(page.getByRole("alert")).toContainText(
+    "Could not load rejected entries",
+  );
+  await expect(page.getByTestId("rejected-empty")).toHaveCount(0);
+  loadFailed = false;
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  const card = page.getByTestId("rejected-card-retry-entry");
+  await expect(card).toBeVisible();
+  await page
+    .getByTestId("rejected-menu-retry-entry")
+    .locator("summary")
+    .click();
+  await page.getByTestId("rejected-restore-retry-entry").click();
+  await expect(card.getByRole("alert")).toContainText("Please try again");
+  restoreFailed = false;
+  await page
+    .getByTestId("rejected-menu-retry-entry")
+    .locator("summary")
+    .click();
+  await page.getByTestId("rejected-restore-retry-entry").click();
+  await expect(page.getByTestId("rejected-empty")).toBeVisible();
 });
 
 test("an author deletes their own entry from My submissions", async ({
@@ -4700,7 +5104,16 @@ test("durable duplicate check reconnects after reload and a closed browser page"
   );
   const originalText = job!.projectText;
   page.on("dialog", (dialog) => dialog.accept());
+  const resumed = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/topology-task" &&
+      response.request().method() === "GET",
+  );
   await page.reload();
+  await awaitEditorReady(page);
+  expect(await (await resumed).json()).toMatchObject({
+    job: { id: job!.id, report: { scanned: 1 } },
+  });
   await expect(page.getByTestId("gallery-topology-task-notice")).toContainText(
     "1 compared",
   );
@@ -4714,7 +5127,16 @@ test("durable duplicate check reconnects after reload and a closed browser page"
     report: { ...job!.report, scanned: 7, comparable: 7, complete: true },
   };
   const reopened = await context.newPage();
+  const restored = reopened.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/topology-task" &&
+      response.request().method() === "GET",
+  );
   await reopened.goto("/editor?new=1");
+  await awaitEditorReady(reopened);
+  expect(await (await restored).json()).toMatchObject({
+    job: { id: job!.id, running: false, report: { scanned: 7 } },
+  });
   await expect(
     reopened.getByTestId("gallery-topology-task-notice"),
   ).toContainText("Duplicate check finished");

@@ -1,3 +1,4 @@
+import { clearFormulaArtifactCacheForTests } from "../packages/math-typesetting/src/cache";
 import { CURRENT_PROJECT_SCHEMA_VERSION } from "@icm/model";
 import { CURRENT_PROJECT_FILE_VERSION } from "@icm/project-protocol";
 import { DatabaseSync } from "node:sqlite";
@@ -264,6 +265,29 @@ function submissionRequest(
 
 function projectText(name = "Fixture"): string {
   return serializeProject(createEmptyProject("gallery-fixture", name));
+}
+
+function formulaProjectText(): string {
+  const project = createEmptyProject("formula-fixture", "Formula circuit");
+  project.documents[0]!.drafting!.objects.push({
+    id: "formula-note",
+    kind: "text",
+    locked: false,
+    zIndex: 0,
+    anchor: { kind: "free", position: { x: 100, y: 100 } },
+    alignment: "middle",
+    rotation: 0,
+    content: {
+      runs: [
+        {
+          kind: "math",
+          latex: String.raw`\frac{1}{\sqrt{L_1C_1}}`,
+          display: "block",
+        },
+      ],
+    },
+  });
+  return serializeProject(project);
 }
 
 function previousVersionText(): string {
@@ -725,7 +749,13 @@ describe("newest-first gallery feed", () => {
   it("stops when the newest-first cursor chain is exhausted", async () => {
     const env = environment();
     const empty = await galleryPage(env);
-    expect(empty).toEqual({ entries: [], nextCursor: null, total: 0 });
+    expect(empty).toEqual({
+      entries: [],
+      nextCursor: null,
+      total: 0,
+      filterCounts: { attention: 0, netlistable: 0, liked: 0 },
+      authors: [],
+    });
 
     await wallOf(env, 2);
     const full = await galleryPage(env);
@@ -835,6 +865,58 @@ describe("newest-first gallery feed", () => {
         { author: "Chen", ownerUserId: "owner-chen", count: 1 },
       ],
     });
+  });
+
+  it("counts contributors within all feed filters before pagination", async () => {
+    const env = environment();
+    const ids = await wallOf(env, 6);
+    const fixtures = [
+      ["Alice", "owner-a", ",amplifier,", 1, "public"],
+      ["Alice", "owner-a", ",amplifier,", 0, "public"],
+      ["Alice", "owner-b", ",oscillator,", 1, "public"],
+      ["Bob", "owner-c", ",amplifier,", 1, "public"],
+      ["", "owner-blank", ",amplifier,", 1, "public"],
+      ["Hidden", "owner-hidden", ",amplifier,", 1, "rejected"],
+    ] as const;
+    fixtures.forEach((fixture, index) =>
+      env.gallerySql.exec(
+        "UPDATE gallery_entries SET author=?, owner_user_id=?, tags=?, netlistable=?, status=? WHERE id=?",
+        ...fixture,
+        ids[index]!,
+      ),
+    );
+    const list = async (query = "") =>
+      (await (
+        await route(env, new Request(`${ORIGIN}/api/gallery?${query}`))
+      ).json()) as {
+        entries: { id: string }[];
+        nextCursor: string;
+        authors: { author: string; ownerUserId: string; count: number }[];
+      };
+    const first = await list("limit=1&tags=amplifier");
+    expect(first.entries).toHaveLength(1);
+    expect(first.authors).toEqual([
+      { author: "Alice", ownerUserId: "owner-a", count: 2 },
+      { author: "Bob", ownerUserId: "owner-c", count: 1 },
+    ]);
+    expect(
+      (
+        await list(
+          `limit=1&tags=amplifier&cursor=${encodeURIComponent(first.nextCursor)}`,
+        )
+      ).authors,
+    ).toEqual(first.authors);
+    expect((await list("tags=amplifier&netlistable=1")).authors).toEqual([
+      { author: "Alice", ownerUserId: "owner-a", count: 1 },
+      { author: "Bob", ownerUserId: "owner-c", count: 1 },
+    ]);
+    expect((await list("author=Alice&tags=amplifier")).authors).toEqual([
+      first.authors[0],
+    ]);
+    expect((await list("owner=owner-b")).authors).toEqual([
+      { author: "Alice", ownerUserId: "owner-b", count: 1 },
+    ]);
+    expect((await list("owner=owner-b&tags=amplifier")).authors).toEqual([]);
   });
 
   it("filters same-name contributors by stable owner identity", async () => {
@@ -991,28 +1073,71 @@ describe("netlist marks and thumbs", () => {
       return (await response.json()) as {
         entries: { id: string }[];
         total: number;
+        nextCursor: string | null;
+        filterCounts: { attention: number; netlistable: number; liked: number };
+        authors: { author: string; ownerUserId: string; count: number }[];
       };
     };
+
+    const firstPage = await list("limit=1", cookie);
+    expect(firstPage.entries).toHaveLength(1);
+    expect(firstPage.filterCounts).toEqual({
+      attention: 0,
+      netlistable: 1,
+      liked: 1,
+    });
+    const secondPage = await list(
+      `limit=1&cursor=${encodeURIComponent(firstPage.nextCursor!)}`,
+      cookie,
+    );
+    expect(secondPage.filterCounts).toEqual(firstPage.filterCounts);
+    expect(firstPage.authors).toHaveLength(1);
+    expect(firstPage.authors[0]!.count).toBe(2);
+    expect(secondPage.authors).toEqual(firstPage.authors);
+    expect((await list("")).filterCounts).toEqual({
+      attention: 0,
+      netlistable: 1,
+      liked: 0,
+    });
 
     const marked = await list("netlistable=1", cookie);
     expect(marked.entries.map((entry) => entry.id)).toEqual([extractableId]);
     // The total describes the narrowed wall, so paging stays honest.
     expect(marked.total).toBe(1);
+    expect(marked.authors).toEqual([{ ...firstPage.authors[0], count: 1 }]);
+    expect(marked.filterCounts).toEqual({
+      attention: 0,
+      netlistable: 1,
+      liked: 0,
+    });
 
     const liked = await list("liked=1", cookie);
     expect(liked.entries.map((entry) => entry.id)).toEqual([sketchId]);
     expect(liked.total).toBe(1);
+    expect(liked.authors).toEqual(marked.authors);
+    expect(liked.filterCounts).toEqual({
+      attention: 0,
+      netlistable: 0,
+      liked: 1,
+    });
 
     // The marks compose, and here nothing satisfies both.
     const both = await list("netlistable=1&liked=1", cookie);
     expect(both.entries).toHaveLength(0);
     expect(both.total).toBe(0);
+    expect(both.authors).toEqual([]);
+    expect(both.filterCounts).toEqual({
+      attention: 0,
+      netlistable: 0,
+      liked: 0,
+    });
 
     // A like belongs to an account: signed out, "the ones I liked" is none of
     // them rather than all of them.
     const anonymous = await list("liked=1");
     expect(anonymous.entries).toHaveLength(0);
     expect(anonymous.total).toBe(0);
+    expect(anonymous.authors).toEqual([]);
     expect((await list("", cookie)).entries).toHaveLength(2);
   });
 
@@ -1350,6 +1475,53 @@ describe("private Cloud Projects", () => {
     expect(anonymous.status).toBe(401);
   });
 
+  it("renders saved and legacy Shelf formulas without exposing private projects", async () => {
+    const env = environment();
+    const cookie = await makerOf(env);
+    clearFormulaArtifactCacheForTests();
+    const created = await route(
+      env,
+      new Request(`${ORIGIN}/api/projects`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          Origin: ORIGIN,
+          Cookie: cookie,
+        },
+        body: JSON.stringify({
+          name: "Formula circuit",
+          projectText: formulaProjectText(),
+        }),
+      }),
+    );
+    expect(created.status).toBe(201);
+    const { project } = (await created.json()) as {
+      project: { id: string; revision: number };
+    };
+    const original = env.gallerySql
+      .exec<{ preview_svg: string }>(
+        "SELECT preview_svg FROM cloud_projects WHERE id=?",
+        project.id,
+      )
+      .one().preview_svg;
+    expect(original).toContain('data-role="formula"');
+    const legacy = '<svg><text data-role="formula-pending">latex</text></svg>';
+    env.gallerySql.exec(
+      "UPDATE cloud_projects SET preview_svg=? WHERE id=?",
+      legacy,
+      project.id,
+    );
+    clearFormulaArtifactCacheForTests();
+    const url = `${ORIGIN}/api/projects/${project.id}/preview.svg?v=${project.revision}&render=formula-sans-v2`;
+    const repaired = await route(
+      env,
+      new Request(url, { headers: cookieHeaders(cookie) }),
+    );
+    expect(await repaired.text()).toBe(original);
+    expect(repaired.headers.get("cache-control")).toContain("private");
+    expect((await route(env, new Request(url))).status).toBe(401);
+  });
+
   it("backfills a thumbnail for a shelf saved before previews existed", async () => {
     const env = environment();
     const cookie = await makerOf(env);
@@ -1621,6 +1793,75 @@ describe("private Cloud Projects", () => {
 });
 
 describe("gallery submissions", () => {
+  it("prepares formulas on cold publish and repairs legacy previews without changing publications", async () => {
+    const env = environment();
+    const cookie = await adminOf(env);
+    clearFormulaArtifactCacheForTests();
+    const id = await submitOne(env, "Formula circuit", {
+      cookie,
+      text: formulaProjectText(),
+    });
+    const stored = () =>
+      env.gallerySql
+        .exec<{
+          svg_text: string;
+          preview_revision: string;
+          project_text: string;
+        }>(
+          "SELECT svg_text, preview_revision, project_text FROM gallery_entries WHERE id=?",
+          id,
+        )
+        .one();
+    const current = stored();
+    expect(current.svg_text).toContain('data-role="formula"');
+    expect(current.svg_text).toContain('data-c="1D5DF"');
+    expect(current.svg_text).not.toContain('data-role="formula-pending"');
+    const legacy =
+      '<svg xmlns="http://www.w3.org/2000/svg"><text data-role="formula-pending">old latex</text></svg>';
+    env.gallerySql.exec(
+      "UPDATE gallery_entries SET svg_text=? WHERE id=?",
+      legacy,
+      id,
+    );
+    const before = stored();
+    const request = new Request(
+      `${ORIGIN}/api/gallery/${id}/preview.svg?v=${before.preview_revision}&render=formula-sans-v2`,
+    );
+    const cache = memoryPreviewCache();
+    await cache.put(request, new Response(legacy));
+    clearFormulaArtifactCacheForTests();
+    const repaired = await routeGalleryRequest(request, env, {
+      previewCache: cache,
+    });
+    expect(repaired!.status).toBe(200);
+    expect(await repaired!.text()).toBe(current.svg_text);
+    expect(stored()).toEqual(before);
+    expect(
+      env.gallerySql
+        .exec<{ count: number }>(
+          "SELECT COUNT(*) AS count FROM gallery_entry_versions WHERE entry_id=?",
+          id,
+        )
+        .one().count,
+    ).toBe(0);
+    env.galleryQueries.length = 0;
+    const cached = await routeGalleryRequest(request, env, {
+      previewCache: cache,
+    });
+    expect(await cached!.text()).toBe(current.svg_text);
+    expect(env.galleryQueries.some((sql) => sql.includes("project_text"))).toBe(
+      false,
+    );
+    env.gallerySql.exec(
+      "UPDATE gallery_entries SET status='rejected' WHERE id=?",
+      id,
+    );
+    expect(
+      (await routeGalleryRequest(request, env, { previewCache: cache }))!
+        .status,
+    ).toBe(404);
+  });
+
   it("publishes immediately with canonical text and a server preview", async () => {
     const env = environment();
     const id = await submitOne(env, "Ring Oscillator");
@@ -4750,12 +4991,19 @@ describe("Gallery visual curation", () => {
           tags: string[];
         }>;
         total: number;
+        filterCounts: { attention: number; netlistable: number; liked: number };
+        authors: { author: string; ownerUserId: string; count: number }[];
       }>;
     const manyTags = Array.from({ length: 20 }, (_, i) => `absent${i}`);
     manyTags.push("ota");
     expect((await feed("", `?tags=${manyTags.join(",")}`)).total).toBe(2);
     const publicFeed = await feed("");
     expect(publicFeed.total).toBe(2);
+    expect(publicFeed.filterCounts.attention).toBe(0);
+    expect((await feed(admin, "?limit=1")).filterCounts.attention).toBe(2);
+    expect((await feed(maker)).filterCounts.attention).toBe(1);
+    expect((await feed(other)).filterCounts.attention).toBe(1);
+    expect((await feed(maker, "?tags=absent")).filterCounts.attention).toBe(0);
     expect((await feed("", "?category=amplifiers")).total).toBe(2);
     expect(publicFeed.entries.every((e) => e.attention === undefined)).toBe(
       true,
@@ -4765,6 +5013,16 @@ describe("Gallery visual curation", () => {
       (await feed(maker, "?attention=1")).entries.map((e) => e.id),
     ).toEqual([mine]);
     expect((await feed(admin, "?attention=1")).total).toBe(2);
+    const mineAuthors = (await feed(maker, "?attention=1")).authors;
+    const otherAuthors = (await feed(other, "?attention=1")).authors;
+    expect(mineAuthors).toHaveLength(1);
+    expect(otherAuthors).toHaveLength(1);
+    expect(mineAuthors[0]!.count).toBe(1);
+    expect(mineAuthors[0]!.ownerUserId).not.toBe(otherAuthors[0]!.ownerUserId);
+    expect((await feed(admin, "?attention=1&limit=1")).authors).toEqual(
+      expect.arrayContaining([...mineAuthors, ...otherAuthors]),
+    );
+    expect((await feed(maker, "?attention=1&tags=absent")).authors).toEqual([]);
     expect(
       (await feed(other)).entries.find((e) => e.id === mine)?.attention,
     ).toBeUndefined();
@@ -4785,6 +5043,9 @@ describe("Gallery visual curation", () => {
       ).status,
     ).toBe(200);
     expect((await feed(maker, "?attention=1")).total).toBe(0);
+    expect((await feed(maker, "?attention=1")).authors).toEqual([]);
+    expect((await feed(maker)).filterCounts.attention).toBe(0);
+    expect((await feed(admin)).filterCounts.attention).toBe(1);
     expect((await update(env, mine, maker)).status).toBe(200);
     expect((await feed(maker, "?attention=1")).total).toBe(1);
   });

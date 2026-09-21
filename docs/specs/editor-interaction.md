@@ -306,6 +306,23 @@ Before that click, neither the document nor undo history changes; Escape or
 choosing another tool discards the preview. Fixed catalog text presets keep their
 existing placement behavior.
 
+**Annotation → Polyline**, also available in the Library, draws a solid open
+path with any number of vertices. Click each vertex, then double-click or press
+Enter to finish; Escape cancels the unfinished drawing. Click the first vertex
+after placing at least three distinct vertices to close a polygon. Drawing
+angle constraints apply to each leg from its preceding vertex.
+
+Select the path to drag its round vertex handles independently. The four square
+handles outside its bounding box stretch it horizontally and vertically with
+the opposite corner fixed. A closed path's first/last vertex moves as one seam.
+Double-click a segment to add another vertex. In Q Properties, `geometry.points`
+edits the ordered coordinates and `geometry.closed` adds/removes the closing
+edge. `appearance.startStyle` and `appearance.endStyle` independently select
+no head, small/medium/large arrow, open arrow, or dot; color, stroke and line
+style use the same Properties code. These are visual annotations and introduce
+no electrical instances or nets. Project files retain the existing free-arrow
+path representation, including an explicit final edge for a closed polygon.
+
 Drawn objects place on the annotation pitch (1, 5 or 10; Canvas settings, 5 by
 default), which is deliberately free of the Document's electrical grid so a
 label or an arrow head can sit where it is wanted. A rectangle is the
@@ -574,7 +591,16 @@ referenced source-file records. It is not persisted or added to the Agent API.
 Source-file records are provenance, not bundled PDK model contents. Simulation
 folders, simulator configuration, run results and unrelated Cells are not copied.
 
-Every placement allocates new canvas object IDs and collision-free References.
+Every placement allocates new canvas object IDs and collision-free component
+instance References. Net names and Cell Pin names remain exactly as authored on
+all copy paths (C, Ctrl/Cmd+C/V, project tabs, and Gallery insertion), including
+when the destination already has the same name. No `_copy` suffix is added.
+Copied electrical labels retain their RichText, overbars, subscripts, typography,
+color and host-relative offsets; moving a copy changes its position only.
+Equal explicit Net/Pin names resolve to the same Logical Net while their drawn
+routes and individual markers remain independently editable. Voltage expressions
+keep their unchanged node names; behavioral references to renamed component
+instances still reject rather than silently target a different device.
 Compatible external definitions are reused by validated interface and presentation,
 not by coincident source IDs. Incompatible same-name definitions or Cell parameter
 defaults reject before placement. Child imports share one immutable source snapshot;

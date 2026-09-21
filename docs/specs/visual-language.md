@@ -84,6 +84,12 @@ formal profile recognizes MathLive's `\differentialD` source as an upright
 differential operator, so source produced by the editor preview remains valid
 without rewriting the persisted LaTeX. The typesetter emits standalone
 path-only SVG with deterministic width, height, baseline, and source identity.
+Formula letters and numerals default to bold sans-serif, matching schematic
+text. Drafting text and callout weight/slant overrides also apply to formulas;
+explicit LaTeX font commands retain their meaning. This is rendering style,
+not a rewrite of the stored expression. Measurement and drawing use the same
+style-aware artifact, prepared before canvas, export, and server thumbnail
+rendering.
 Formula SVG is embedded into the same formal
 scene used by canvas, SVG, PNG, and vector PDF; it is never rasterized or
 persisted.
@@ -142,8 +148,13 @@ active symbol variant's visible geometry and clusters repeated overlaps.
   metrics are transient derived output.
 - Annotation attachment moves with an edited instance while its offset and
   semantic kind remain persisted.
-- Instance-label drag is bounded around its symbol and Net-label drag is
-  bounded around attached route geometry; free text is unconstrained.
+- Instance labels may be dragged to any position, retaining their
+  object-relative anchor so they follow subsequent component moves. Ordinary
+  Net labels also move freely without changing their electrical binding;
+  directional route markers retain their route attachment.
+- New Analog Block names sit about five units outside the drawn artwork,
+  matching compact device-label spacing. Label coordinates use fine precision
+  rather than connection-grid rounding; saved, authored placements are retained.
 - Visual goldens use original project fixtures, not copied textbook artwork.
 
 ## Operations and state transitions

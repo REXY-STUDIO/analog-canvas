@@ -54,7 +54,7 @@ export function galleryPreviewUrl(
 ): string {
   const path = `/api/gallery/${entryId}/preview.svg`;
   return validPreviewRevision(previewRevision)
-    ? `${path}?v=${encodeURIComponent(previewRevision)}`
+    ? `${path}?v=${encodeURIComponent(previewRevision)}&render=formula-sans-v2`
     : path;
 }
 
@@ -187,11 +187,21 @@ export interface GalleryFeedEntry {
   likedByViewer?: boolean;
 }
 
+export interface GalleryQuickFilterCounts {
+  attention: number;
+  netlistable: number;
+  liked: number;
+}
+
 export interface GalleryFeedPage {
   entries: GalleryFeedEntry[];
   nextCursor: string | null;
   /** Whole filtered wall's size; null while a pre-totals API answers. */
   total: number | null;
+  /** Counts across the filtered wall, before pagination, scoped to this viewer. */
+  filterCounts?: GalleryQuickFilterCounts;
+  /** Contributors to the filtered wall, before pagination. */
+  authors?: GalleryAuthorOption[];
 }
 
 export interface GalleryFeedState {
@@ -199,6 +209,10 @@ export interface GalleryFeedState {
   entries: GalleryFeedEntry[];
   nextCursor: string | null;
   total: number | null;
+  /** Counts across the filtered wall, before pagination, scoped to this viewer. */
+  filterCounts?: GalleryQuickFilterCounts;
+  /** Contributors to the filtered wall, before pagination. */
+  authors?: GalleryAuthorOption[];
 }
 
 function normalizeGallerySearchText(value: string): string {
@@ -312,11 +326,64 @@ export interface GalleryLandingPreload {
   tagsNetlistable?: boolean;
 }
 
-/** One public byline and its contribution to the whole Gallery wall. */
+/** One public byline and its contribution to the current Gallery results. */
 export interface GalleryAuthorOption {
   author: string;
   ownerUserId?: string | null;
   count: number;
+}
+
+function contributorKey(
+  entry: Pick<GalleryAuthorOption, "author" | "ownerUserId">,
+): string {
+  return entry.ownerUserId
+    ? `owner:${entry.ownerUserId}`
+    : `legacy:${entry.author}`;
+}
+
+function rankContributors(
+  authors: GalleryAuthorOption[],
+): GalleryAuthorOption[] {
+  return authors.sort(
+    (a, b) => b.count - a.count || a.author.localeCompare(b.author),
+  );
+}
+
+/** Search uses the same matching entries as the cards, including on older APIs. */
+export function galleryAuthorsOf(
+  entries: readonly GalleryFeedEntry[],
+): GalleryAuthorOption[] {
+  const authors = new Map<string, GalleryAuthorOption>();
+  for (const entry of entries) {
+    if (!entry.author.trim()) continue;
+    const key = contributorKey(entry);
+    const previous = authors.get(key);
+    authors.set(key, {
+      author:
+        previous && previous.author > entry.author
+          ? previous.author
+          : entry.author,
+      ownerUserId: entry.ownerUserId ?? null,
+      count: (previous?.count ?? 0) + 1,
+    });
+  }
+  return rankContributors([...authors.values()]);
+}
+
+/** Keep full-page aggregates current while a local removal awaits a refresh. */
+export function removeGalleryAuthorEntry(
+  authors: readonly GalleryAuthorOption[],
+  entry: GalleryFeedEntry,
+): GalleryAuthorOption[] {
+  return rankContributors(
+    authors
+      .map((author) =>
+        entry.author.trim() && contributorKey(author) === contributorKey(entry)
+          ? { ...author, count: author.count - 1 }
+          : author,
+      )
+      .filter((author) => author.count > 0),
+  );
 }
 
 export async function loadGalleryFeed(
@@ -356,12 +423,34 @@ export async function loadGalleryFeed(
       entries?: GalleryFeedEntry[];
       nextCursor?: unknown;
       total?: unknown;
+      filterCounts?: GalleryQuickFilterCounts;
+      authors?: GalleryAuthorOption[];
     };
     return {
       entries: payload.entries ?? [],
       nextCursor:
         typeof payload.nextCursor === "string" ? payload.nextCursor : null,
       total: typeof payload.total === "number" ? payload.total : null,
+      ...(Array.isArray(payload.authors) &&
+      payload.authors.every(
+        (author) =>
+          author &&
+          typeof author.author === "string" &&
+          (author.ownerUserId == null ||
+            typeof author.ownerUserId === "string") &&
+          Number.isSafeInteger(author.count) &&
+          author.count > 0,
+      )
+        ? { authors: payload.authors }
+        : {}),
+      ...(payload.filterCounts &&
+      ["attention", "netlistable", "liked"].every((key) => {
+        const count =
+          payload.filterCounts![key as keyof GalleryQuickFilterCounts];
+        return Number.isSafeInteger(count) && count >= 0;
+      })
+        ? { filterCounts: payload.filterCounts }
+        : {}),
     };
   } catch {
     return null;
