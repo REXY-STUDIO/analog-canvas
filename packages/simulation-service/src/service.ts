@@ -18,6 +18,7 @@ import { simulationSpecReport, simulationSpecsToCsv } from "./spec-results.js";
 import { vacaskMeasurementResults } from "./vacask-measurements.js";
 import { ngspiceMeasurementResults } from "./ngspice-measurements.js";
 import { executionArtifactEntries } from "./execution-artifacts.js";
+import { resultCatalog } from "./result-catalog.js";
 
 import {
   ExecutionFailure,
@@ -37,7 +38,6 @@ type InternalRun = {
   engine: "ngspice" | "vacask";
   prepared: Prepared;
   token: string;
-  expiresAt: number;
   done: Promise<void>;
   source: PrepareSource;
 };
@@ -148,6 +148,26 @@ export class SimulationService {
           : { ok: true, helpers };
       }
       this.prune();
+      if (op.operation === "history") {
+        try {
+          return {
+            ok: true,
+            ...(await this.files.history(op.limit, op.cursor)),
+          };
+        } catch (error) {
+          const invalidCursor =
+            error instanceof Error &&
+            error.message === "HISTORY_CURSOR_UNAVAILABLE";
+          return problem(
+            invalidCursor
+              ? "HISTORY_CURSOR_UNAVAILABLE"
+              : "RUN_HISTORY_UNAVAILABLE",
+            "Retained run directory could not be read; no simulation was started",
+            "read",
+            invalidCursor ? "fix-input" : "retry-after",
+          );
+        }
+      }
       if (op.operation === "capabilities")
         return {
           ok: true,
@@ -169,8 +189,36 @@ export class SimulationService {
       if (op.operation === "start-batch") return this.startBatch(op, requestId);
       if (op.operation === "read-batch" || op.operation === "cancel-batch")
         return await this.accessBatch(op);
-      if (op.operation === "read" || op.operation === "cancel") {
+      if (
+        op.operation === "read" ||
+        op.operation === "cancel" ||
+        op.operation === "catalog"
+      ) {
         const run = this.runs.get(op.runId);
+        if (!run && (op.operation === "catalog" || op.operation === "read")) {
+          const catalog = await this.files.catalog(op.runId);
+          if (catalog) {
+            if (op.operation === "catalog") return { ok: true, catalog };
+            return {
+              ok: true,
+              run: {
+                id: catalog.runId,
+                preparedId: catalog.preparedId,
+                inputRevision: catalog.inputRevision,
+                state:
+                  catalog.execution === "cancelled" ||
+                  catalog.execution === "lost"
+                    ? catalog.execution
+                    : "finished",
+                artifacts: catalog.files,
+                catalog,
+                ...(catalog.error ? { error: catalog.error } : {}),
+                inputStatus: "unavailable",
+                resultPreview: true,
+              },
+            };
+          }
+        }
         if (!run)
           return problem(
             "RUN_STATE_LOST",
@@ -178,6 +226,14 @@ export class SimulationService {
             "read",
             "not-retryable",
           );
+        if (op.operation === "catalog")
+          return {
+            ok: true,
+            catalog: structuredClone(
+              run.view.catalog ??
+                resultCatalog(run.view, "pending", run.prepared.signalTargets),
+            ),
+          };
         if (
           op.operation === "cancel" &&
           ["running", "cancelling", "lost"].includes(run.view.state)
@@ -244,7 +300,10 @@ export class SimulationService {
           message:
             "This operation failed; the session and authored input remain available.",
           stage:
-            op.operation === "capabilities" || op.operation === "authoring-help"
+            op.operation === "capabilities" ||
+            op.operation === "authoring-help" ||
+            op.operation === "history" ||
+            op.operation === "catalog"
               ? "read"
               : op.operation === "prepare-batch"
                 ? "prepare"
@@ -265,21 +324,22 @@ export class SimulationService {
   }
   private prune() {
     const now = this.now();
+    const pinned = new Set(
+      [...this.batches.values()]
+        .filter((batch) => ["running", "cancelling"].includes(batch.view.state))
+        .flatMap((batch) => batch.view.items.map((item) => item.prepared.id)),
+    );
     for (const [id, p] of this.prepared)
-      if (p.view.expiresAt <= now) this.prepared.delete(id);
-    for (const [id, r] of this.runs)
-      if (
-        r.expiresAt <= now &&
-        !["running", "cancelling"].includes(r.view.state)
-      )
-        this.runs.delete(id);
+      if (p.view.expiresAt <= now && !pinned.has(id)) this.prepared.delete(id);
     for (const [id, batch] of this.batches)
       if (
+        batch.view.expiresAt !== null &&
         batch.view.expiresAt <= now &&
-        !["running", "cancelling"].includes(batch.view.state)
+        batch.view.state === "prepared"
       )
         this.batches.delete(id);
-    // Keep request tombstones for this session: an expired run must not be executed again.
+    // Only unused execution preparations expire. Finished receipts and their
+    // request identities survive for this host lifetime; evidence has its own storage.
   }
   private async prepareBatch(
     op: Extract<SimulationOperation, { operation: "prepare-batch" }>,
@@ -573,7 +633,7 @@ export class SimulationService {
       : batch.view.items.some((item) => ["failed", "lost"].includes(item.state))
         ? "failed"
         : "finished";
-    batch.view.expiresAt = this.now() + TTL;
+    batch.view.expiresAt = null;
   }
   private async accessBatch(
     op: Extract<
@@ -613,6 +673,7 @@ export class SimulationService {
         }
       } else {
         batch.view.state = "cancelled";
+        batch.view.expiresAt = null;
       }
     }
     return { ok: true, batch: structuredClone(batch.view) };
@@ -667,11 +728,15 @@ export class SimulationService {
         "prepared.cir",
         "text/plain",
         input.preparedDeck,
+        { role: "prepared" },
       ),
     );
     for (const f of input.files)
       artifacts.push(
-        await this.publishArtifact(epoch, f.path, "text/plain", f.text),
+        await this.publishArtifact(epoch, f.path, "text/plain", f.text, {
+          role: "source",
+          sourcePath: f.path,
+        }),
       );
     artifacts.push(
       await this.publishArtifact(
@@ -679,6 +744,7 @@ export class SimulationService {
         "source-map.json",
         "application/json",
         JSON.stringify(preparation.sourceMaps, null, 2),
+        { role: "source-map" },
       ),
     );
     artifacts.push(
@@ -687,6 +753,7 @@ export class SimulationService {
         "prepared.json",
         "application/json",
         JSON.stringify(input, null, 2),
+        { role: "execution-input" },
       ),
     );
     if (epoch !== this.epoch)
@@ -794,7 +861,6 @@ export class SimulationService {
       engine: prepared.input.language === "vacask" ? "vacask" : "ngspice",
       prepared: structuredClone(prepared.view),
       token: crypto.randomUUID(),
-      expiresAt: this.now() + TTL,
       done: Promise.resolve(),
       source: prepared.source,
     };
@@ -815,6 +881,8 @@ export class SimulationService {
     timeoutMs: number | undefined,
     epoch: number,
   ) {
+    let collectionStatus: "complete" | "partial" = "complete";
+    let terminalState: Run["state"] = "finished";
     try {
       const output = validateExecutionOutput(
         input,
@@ -825,6 +893,7 @@ export class SimulationService {
       );
       if (epoch !== this.epoch) return;
       run.view.result = output.result;
+      collectionStatus = output.collectionStatus ?? "complete";
       const nativeReports =
         output.result.metadata.environment.simulator.name === "vacask"
           ? vacaskMeasurementResults(
@@ -859,17 +928,32 @@ export class SimulationService {
         diagnostics: nativeReports.diagnostics,
         specs,
       };
-      const artifact = async (name: string, type: string, text: string) =>
+      const artifact = async (
+        name: string,
+        type: string,
+        text: string,
+        metadata: Pick<ArtifactRef, "role" | "sourcePath" | "analysisIndex">,
+      ) =>
         run.view.artifacts.push(
-          await this.publishArtifact(epoch, name, type, text),
+          await this.publishArtifact(epoch, name, type, text, metadata),
         );
-      await artifact("log.txt", "text/plain", output.result.log);
-      await artifact("specs.json", "application/json", JSON.stringify(specs));
-      await artifact("specs.csv", "text/csv", simulationSpecsToCsv(specs));
+      await artifact("log.txt", "text/plain", output.result.log, {
+        role: "log",
+      });
+      await artifact("specs.json", "application/json", JSON.stringify(specs), {
+        role: "specs",
+      });
+      await artifact("specs.csv", "text/csv", simulationSpecsToCsv(specs), {
+        role: "specs",
+      });
       if (output.rawfile !== undefined)
-        await artifact("out.raw", "text/plain", output.rawfile);
+        await artifact("out.raw", "text/plain", output.rawfile, {
+          role: "raw",
+        });
       if (output.executedDeck !== undefined)
-        await artifact("executed.cir", "text/plain", output.executedDeck);
+        await artifact("executed.cir", "text/plain", output.executedDeck, {
+          role: "executed",
+        });
       const nativeArtifacts: {
         kind: "raw" | "executed";
         path: string;
@@ -881,6 +965,7 @@ export class SimulationService {
           item.name,
           "text/plain",
           item.text,
+          { role: item.kind, sourcePath: item.path },
         );
         run.view.artifacts.push(ref);
         nativeArtifacts.push({
@@ -893,6 +978,7 @@ export class SimulationService {
         "result.json",
         "application/json",
         JSON.stringify(output.result),
+        { role: "result" },
       );
       for (const [i, analysis] of (
         output.result.data?.analyses ?? []
@@ -901,7 +987,13 @@ export class SimulationService {
           analysis.analysis + "-" + i + ".csv",
           "text/csv",
           simulationAnalysisToCsv(analysis),
+          { role: "table", analysisIndex: i },
         );
+      const catalog = resultCatalog(
+        { ...run.view, state: output.cancelled ? "cancelled" : "finished" },
+        collectionStatus,
+        run.prepared.signalTargets,
+      );
       const evidenceArtifacts = run.view.artifacts.map((item) => ({ ...item }));
       await artifact(
         "evidence-manifest.json",
@@ -928,17 +1020,19 @@ export class SimulationService {
             environment: output.result.metadata.environment,
             ...(nativeArtifacts.length ? { nativeArtifacts } : {}),
             artifacts: evidenceArtifacts,
+            catalog,
           },
           null,
           2,
         ),
+        { role: "manifest" },
       );
       if (epoch === this.epoch)
-        run.view.state = output.cancelled ? "cancelled" : "finished";
+        terminalState = output.cancelled ? "cancelled" : "finished";
     } catch (error) {
       if (epoch !== this.epoch) return;
       if (error instanceof ExecutionFailure) {
-        run.view.state =
+        terminalState =
           error.problem.code === "run-cancelled"
             ? "cancelled"
             : error.acceptedUnknown
@@ -946,27 +1040,49 @@ export class SimulationService {
               : "finished";
         run.view.error = error.problem;
       } else {
-        run.view.state = run.view.result ? "finished" : "lost";
+        terminalState = run.view.result ? "finished" : "lost";
         run.view.error = {
           code:
             error instanceof Error && error.message === "ARTIFACT_CAPACITY"
               ? "ARTIFACT_CAPACITY"
-              : "INTERNAL_ERROR",
+              : error instanceof Error &&
+                  error.message === "ARTIFACT_STORAGE_UNAVAILABLE"
+                ? "ARTIFACT_STORAGE_UNAVAILABLE"
+                : "INTERNAL_ERROR",
           message:
-            "Run evidence could not be fully collected. Existing artifacts remain available; export them before the retention window expires.",
+            "Run evidence could not be fully collected. Existing artifacts remain available; inspect the collection error before starting another run.",
           stage: "read",
           recovery: "not-retryable",
           correlationId: crypto.randomUUID(),
         };
       }
     }
-    run.expiresAt = this.now() + TTL;
+    run.view.catalog = resultCatalog(
+      { ...run.view, state: terminalState },
+      run.view.error ? "partial" : collectionStatus,
+      run.prepared.signalTargets,
+    );
+    if (!(await this.files.saveCatalog(run.view.catalog))) {
+      run.view.error ??= {
+        code: "RUN_CATALOG_STORAGE_UNAVAILABLE",
+        message:
+          "Files were collected, but the durable run directory could not be saved. Keep this run ID and download its evidence before closing the host.",
+        stage: "export",
+        recovery: "retry-after",
+      };
+    }
+    if (epoch !== this.epoch) return;
+    run.view.state = terminalState;
+    // Do not retain full numeric arrays in memory after complete artifact
+    // publication. On publication failure, preserve any otherwise unsaved data.
+    if (!run.view.error) run.view = runReceipt(run.view);
   }
   private async publishArtifact(
     epoch: number,
     name: string,
     mediaType: string,
     text: string,
+    metadata: Pick<ArtifactRef, "role" | "sourcePath" | "analysisIndex"> = {},
   ) {
     if (epoch !== this.epoch)
       throw new ExecutionFailure({
@@ -975,7 +1091,7 @@ export class SimulationService {
         stage: "export",
         recovery: "reauthorize",
       });
-    const ref = await this.files.put(name, mediaType, text);
+    const ref = await this.files.put(name, mediaType, text, metadata);
     if (epoch !== this.epoch)
       throw new ExecutionFailure({
         code: "SESSION_CHANGED",

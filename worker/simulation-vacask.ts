@@ -4,9 +4,15 @@ import {
   CapabilitiesSchema,
   decodeHostedExecutionPayload,
   validateNativeExecutionInput,
+  readExecutionReceipt,
+  encodeExecutionReceipt,
+  EXECUTION_RECEIPT_HEADER,
+  boundExecutionStream,
+  sha256,
 } from "@icm/simulation-service";
 import {
   SIMULATION_EXECUTOR_RESPONSE_MAX_BYTES,
+  SIMULATION_EXECUTOR_TRANSFER_HEADER,
   createSimulationInputMetadata,
   verifySimulationEnvironmentMetadata,
 } from "@icm/spice-run";
@@ -138,6 +144,11 @@ function selectRunner(
   return {
     fetch: (path, init) => {
       const headers = new Headers({ "content-type": "application/json" });
+      if (
+        new Headers(init?.headers).get(SIMULATION_EXECUTOR_TRANSFER_HEADER) ===
+        "receipt-v1"
+      )
+        headers.set(SIMULATION_EXECUTOR_TRANSFER_HEADER, "receipt-v1");
       if (env.SIMULATION_UPSTREAM_TOKEN)
         headers.set("authorization", `Bearer ${env.SIMULATION_UPSTREAM_TOKEN}`);
       return fetch(new URL(new URL(path).pathname, base), {
@@ -353,10 +364,14 @@ export async function routeVacaskSimulationRequest(
   try {
     response = await runner.fetch("http://container/run", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        [SIMULATION_EXECUTOR_TRANSFER_HEADER]: "receipt-v1",
+      },
       body: JSON.stringify({
         ...input,
         timeoutMs,
+        execution,
         ...(body.runToken ? { runToken: body.runToken } : {}),
       }),
       signal: AbortSignal.timeout(150000),
@@ -395,6 +410,45 @@ export async function routeVacaskSimulationRequest(
         : undefined,
     );
   try {
+    const receipt = readExecutionReceipt(
+      response.headers.get(EXECUTION_RECEIPT_HEADER),
+    );
+    if (receipt) {
+      const actual = await verifySimulationEnvironmentMetadata(
+        receipt.metadata.environment,
+      );
+      const expected = await createSimulationInputMetadata({
+        inputRevision: input.inputRevision,
+        netlist: "",
+        testbench: input.testbench,
+        deck: input.preparedDeck!,
+      });
+      if (
+        !response.body ||
+        receipt.runToken !== body.runToken ||
+        receipt.execution?.target !== target ||
+        !actual ||
+        actual.fingerprint !== environment.fingerprint ||
+        Object.entries(expected).some(
+          ([key, field]) =>
+            receipt.metadata.input[key as keyof typeof expected] !== field,
+        ) ||
+        (receipt.executedFilesSha256 !==
+          (await sha256(JSON.stringify(input.files))) &&
+          receipt.executedFilesSha256 !== (await sha256("[]")))
+      )
+        throw new Error("Changed streaming input/runtime evidence");
+      return new Response(
+        boundExecutionStream(response.body, receipt.byteLength),
+        {
+          headers: {
+            "content-type": "application/json",
+            "cache-control": "no-store",
+            [EXECUTION_RECEIPT_HEADER]: encodeExecutionReceipt(receipt),
+          },
+        },
+      );
+    }
     const output = decodeHostedExecutionPayload(
       input,
       JSON.parse(
@@ -432,9 +486,11 @@ export async function routeVacaskSimulationRequest(
       execution,
       rawfiles: output.rawfiles,
       executedFiles: output.executedFiles,
+      collectionStatus: output.collectionStatus,
       cancelled: output.cancelled,
     });
   } catch {
+    await response.body?.cancel().catch(() => {});
     return json(
       {
         error: "simulator-protocol-invalid",

@@ -3,6 +3,7 @@ import { nativeWorkerEnv } from "./simulation.test-fixture";
 import { SimulationControlDO } from "./simulation-control-do";
 import type {
   SimulationArtifactBucket,
+  SimulationArtifactObject,
   SimulationJobMessage,
   SimulationOperationsEnv,
 } from "./simulation-operations";
@@ -47,12 +48,29 @@ function sqliteState() {
 
 class MemoryBucket implements SimulationArtifactBucket {
   readonly objects = new Map<string, string>();
-  async get(key: string) {
+  async get(key: string): Promise<SimulationArtifactObject | null> {
     const value = this.objects.get(key);
-    return value === undefined ? null : { text: async () => value };
+    return value === undefined
+      ? null
+      : { body: new Blob([value]).stream(), text: async () => value };
   }
-  async put(key: string, value: string) {
-    this.objects.set(key, value);
+  async put(
+    key: string,
+    value: string | ReadableStream<Uint8Array>,
+    options?: { sha256?: string },
+  ) {
+    const text =
+      typeof value === "string" ? value : await new Response(value).text();
+    if (options?.sha256) {
+      const digest = Array.from(
+        new Uint8Array(
+          await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)),
+        ),
+        (byte) => byte.toString(16).padStart(2, "0"),
+      ).join("");
+      if (digest !== options.sha256) throw new Error("R2 digest mismatch");
+    }
+    this.objects.set(key, text);
     return {};
   }
   async delete(key: string) {

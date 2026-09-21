@@ -310,6 +310,67 @@ test("HTTP Kit alone authors native objects and hands off a Project-folder run",
       },
     ],
   });
+  const sourceOwner = { kind: "project-folder", folderId: "http-folder" };
+  const sourceRead = (
+    await send("files", {
+      operation: "simulation-input",
+      input: {
+        action: "read",
+        owner: sourceOwner,
+        path: "run.cir",
+      },
+    })
+  ).result;
+  const edited = (
+    await send("files", {
+      operation: "simulation-input",
+      input: {
+        action: "update",
+        owner: sourceOwner,
+        expectedRevision: sourceRead.revision,
+        replacements: [
+          {
+            path: "run.cir",
+            textDigest: sourceRead.textDigest,
+            oldText: "* HTTP divider",
+            newText: "* HTTP divider online edit",
+          },
+        ],
+      },
+    })
+  ).result;
+  expect(edited.ok).toBe(true);
+  expect(edited.update).toMatchObject({
+    changed: true,
+    files: [{ path: "run.cir", action: "updated" }],
+  });
+  expect(edited.update.files[0].textDigest).toBe(
+    createHash("sha256")
+      .update(
+        sourceRead.text.replace("* HTTP divider", "* HTTP divider online edit"),
+      )
+      .digest("hex"),
+  );
+  const noChange = (
+    await send("files", {
+      operation: "simulation-input",
+      input: {
+        action: "update",
+        owner: sourceOwner,
+        expectedRevision: edited.source.revision,
+        replacements: [
+          {
+            path: "run.cir",
+            textDigest: edited.update.files[0].textDigest,
+            oldText: "* HTTP divider online edit",
+            newText: "* HTTP divider online edit",
+          },
+        ],
+      },
+    })
+  ).result;
+  expect(noChange.update).toEqual({ changed: false, files: [] });
+  expect(noChange.source.revision).toBe(edited.source.revision);
   const current = await snapshot();
   const prepared = (
     await send("simulation", {
@@ -347,6 +408,78 @@ test("HTTP Kit alone authors native objects and hands off a Project-folder run",
   expect(
     (await send("simulation", { operation: "read", runId: run.id })).run.state,
   ).toBe("finished");
+  const resultCatalog = (
+    await send("simulation", { operation: "catalog", runId: run.id })
+  ).catalog;
+  const raw = resultCatalog.files.find(
+    (file: { role?: string }) => file.role === "raw",
+  );
+  expect(raw).toBeTruthy();
+  let transfer: any;
+  await expect
+    .poll(async () => {
+      transfer = (
+        await send("files", {
+          operation: "simulation-input",
+          input: { action: "download", artifactId: raw.id },
+        })
+      ).result;
+      if (!transfer.ok)
+        expect(transfer.error.code).toBe("ARTIFACT_TRANSFER_PENDING");
+      return transfer.ok;
+    })
+    .toBe(true);
+  expect(transfer.ok, JSON.stringify(transfer.error)).toBe(true);
+  const downloaded = await request.get(`${baseURL}${transfer.download.path}`, {
+    headers: { authorization: `Bearer ${session.agentToken}` },
+  });
+  expect(downloaded.status()).toBe(200);
+  expect(await downloaded.text()).toBe(rawfile);
+  const suffix = await request.get(`${baseURL}${transfer.download.path}`, {
+    headers: {
+      authorization: `Bearer ${session.agentToken}`,
+      range: "bytes=10-",
+    },
+  });
+  expect(suffix.status()).toBe(206);
+  expect(await suffix.body()).toEqual(Buffer.from(rawfile).subarray(10));
+  expect(
+    (await request.get(`${baseURL}${transfer.download.path}`)).status(),
+  ).toBe(401);
+  await page.reload();
+  await expect
+    .poll(async () => {
+      try {
+        const history = await send("simulation", { operation: "history" });
+        return history.runs?.some(
+          (item: { runId: string; storage: string }) =>
+            item.runId === run.id && item.storage === "persistent",
+        );
+      } catch {
+        return false;
+      } // the original connector may still be reattaching
+    })
+    .toBe(true);
+  const recovered = await send("simulation", {
+    operation: "catalog",
+    runId: run.id,
+  });
+  expect(recovered.catalog).toEqual(resultCatalog);
+  const recoveredBody = await send("files", {
+    operation: "simulation-input",
+    input: { action: "artifact", artifactId: raw.id },
+  });
+  expect(recoveredBody.result.text).toBe(rawfile);
+  await expect
+    .poll(async () => {
+      const response = await send("files", {
+        operation: "simulation-input",
+        input: { action: "download", artifactId: raw.id },
+      });
+      return response.result.ok;
+    })
+    .toBe(true);
+  expect(executions).toBe(1);
   const exported = await send("files", {
     operation: "download",
     artifact: "project",

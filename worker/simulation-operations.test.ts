@@ -6,6 +6,7 @@ import {
   nativeWorkerEnv,
   nativeInput,
   nativeHealth,
+  nativeStreamingReply,
 } from "./simulation.test-fixture";
 
 import {
@@ -29,6 +30,117 @@ function startRequest() {
 }
 
 describe("managed simulation operations", () => {
+  it.each([false, true])(
+    "stores receipt-bound executor streams and refuses corrupt evidence (%s)",
+    async (corrupt) => {
+      const { env, jobs, runtime, bucket, close } = harness();
+      const execute = vi.fn(async (_url: string, init?: RequestInit) =>
+        nativeStreamingReply(JSON.parse(String(init?.body)), corrupt),
+      );
+      env.VACASK = nativeWorkerEnv(execute).VACASK;
+      try {
+        const accepted = await routeManagedSimulationRequest(
+          startRequest(),
+          env,
+          runtime,
+        );
+        const id = (await accepted!.json()).run.id;
+        const put = vi.spyOn(bucket, "put");
+        const delivery = { body: jobs[0]!, ack: vi.fn(), retry: vi.fn() };
+        await consumeSimulationJobs({ messages: [delivery] }, env, runtime);
+        const responsePut = put.mock.calls.find(([key]) =>
+          key.endsWith("response.json"),
+        );
+        expect(responsePut?.[1]).toBeInstanceOf(ReadableStream);
+        expect(responsePut?.[2]?.sha256).toMatch(/^[a-f0-9]{64}$/u);
+        const read = await routeManagedSimulationRequest(
+          new Request(`https://canvas.test/api/simulation/runs/${id}`),
+          env,
+          runtime,
+        );
+        expect((await read!.json()).run.state).toBe(
+          corrupt ? "infrastructure-failed" : "succeeded",
+        );
+        expect(delivery.ack).toHaveBeenCalledOnce();
+        expect(delivery.retry).not.toHaveBeenCalled();
+        expect(execute).toHaveBeenCalledOnce();
+        expect(
+          [...bucket.objects.keys()].some((key) =>
+            key.endsWith("response.json"),
+          ),
+        ).toBe(!corrupt);
+      } finally {
+        close();
+      }
+    },
+  );
+  it("streams retained results without buffering and checks ownership before accessing bytes", async () => {
+    const { env, jobs, runtime, bucket, close } = harness();
+    try {
+      const accepted = await routeManagedSimulationRequest(
+        startRequest(),
+        env,
+        runtime,
+      );
+      const id = (await accepted!.json()).run.id;
+      await consumeSimulationJobs(
+        { messages: [{ body: jobs[0]!, ack: vi.fn(), retry: vi.fn() }] },
+        env,
+        runtime,
+      );
+      let emitted = 0;
+      const chunk = new Uint8Array(64 * 1024).fill(65);
+      const text = vi.fn(async () => {
+        throw new Error("must not buffer retained evidence");
+      });
+      const get = vi.spyOn(bucket, "get").mockImplementation(async () => ({
+        text,
+        body: new ReadableStream<Uint8Array>({
+          pull(controller) {
+            if (emitted === 256) controller.close();
+            else {
+              emitted++;
+              controller.enqueue(chunk);
+            }
+          },
+        }),
+      }));
+      const url = `https://canvas.test/api/simulation/runs/${id}/result`;
+      const denied = await routeManagedSimulationRequest(
+        new Request(url),
+        env,
+        {
+          ...runtime,
+          principalOf: async () => ({
+            ...(await runtime.principalOf()),
+            id: "other-owner",
+          }),
+        },
+      );
+      expect(denied!.status).toBe(404);
+      expect(get).not.toHaveBeenCalled();
+      const response = await routeManagedSimulationRequest(
+        new Request(url),
+        env,
+        runtime,
+      );
+      expect(emitted).toBeLessThanOrEqual(1);
+      expect(response!.headers.get("cache-control")).toBe("private, no-store");
+      const reader = response!.body!.getReader();
+      let bytes = 0;
+      while (true) {
+        const next = await reader.read();
+        if (next.done) break;
+        bytes += next.value.byteLength;
+        expect(next.value[0]).toBe(65);
+      }
+      expect(bytes).toBe(16 * 1024 * 1024);
+      expect(text).not.toHaveBeenCalled();
+      expect(get).toHaveBeenCalledOnce();
+    } finally {
+      close();
+    }
+  });
   it("reports queued cancellation as terminal, not result-not-ready, without dispatching", async () => {
     const { env, jobs, runtime, close } = harness();
     const execute = vi.fn();

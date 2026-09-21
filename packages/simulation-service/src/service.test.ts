@@ -184,8 +184,8 @@ function unwrap<T extends "prepared" | "run">(reply: SimulationReply, key: T) {
   if (!reply.ok || !(key in reply)) throw Error(JSON.stringify(reply));
   return (reply as Extract<SimulationReply, Record<T, unknown>>)[key];
 }
-function fixture(engine: "ngspice" | "vacask" = "vacask") {
-  const files = new SimulationFiles();
+function fixture(engine: "ngspice" | "vacask" = "vacask", now = Date.now) {
+  const files = new SimulationFiles(now);
   let release: () => void = () => {};
   const wait = new Promise<void>((r) => (release = r));
   const executor: Executor = {
@@ -202,7 +202,7 @@ function fixture(engine: "ngspice" | "vacask" = "vacask") {
     }),
   };
   const project = createEmptyProject("p", "test", "doc");
-  const service = new SimulationService(files, executor, () => project);
+  const service = new SimulationService(files, executor, () => project, now);
   return { files, executor, service, project, release };
 }
 async function prepareRaw(f: ReturnType<typeof fixture>, source = deck) {
@@ -241,6 +241,110 @@ async function prepareRaw(f: ReturnType<typeof fixture>, source = deck) {
   return { prepared, workspaceId: created.workspace.id };
 }
 describe("shared simulation lifecycle", () => {
+  it.each([true, false])(
+    "publishes terminal state after the directory save resolves (%s)",
+    async (saved) => {
+      const f = fixture();
+      let finish!: (saved: boolean) => void;
+      const persist = vi.spyOn(f.files, "saveCatalog").mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      const { prepared } = await prepareRaw(f);
+      const run = unwrap(
+        await f.service.handle(
+          {
+            operation: "start",
+            preparedId: prepared.id,
+            digest: prepared.digest,
+          },
+          "start",
+        ),
+        "run",
+      );
+      f.release();
+      await vi.waitFor(() => expect(persist).toHaveBeenCalledTimes(1));
+      expect(
+        unwrap(
+          await f.service.handle(
+            { operation: "read", runId: run.id },
+            "before",
+          ),
+          "run",
+        ).state,
+      ).toBe("running");
+      finish(saved);
+      await vi.waitFor(async () => {
+        const reply = unwrap(
+          await f.service.handle({ operation: "read", runId: run.id }, "after"),
+          "run",
+        );
+        expect(reply.state).toBe("finished");
+        expect(reply.error?.code).toBe(
+          saved ? undefined : "RUN_CATALOG_STORAGE_UNAVAILABLE",
+        );
+      });
+      expect(f.executor.execute).toHaveBeenCalledTimes(1);
+    },
+  );
+  it("retains completed receipts, catalogs and evidence after preparation expiry without rerunning", async () => {
+    let now = 0;
+    const f = fixture("ngspice", () => now);
+    const log = "log line\n".repeat(16000);
+    vi.mocked(f.executor.execute).mockImplementation(async (input) => ({
+      result: { ...(await ngspiceResult(input)), log },
+      rawfile: "original raw",
+    }));
+    const { prepared } = await prepareRaw(
+      f,
+      "Fixture\nV1 out 0 1\nR1 out 0 1k\n.end\n",
+    );
+    const start = {
+      operation: "start" as const,
+      preparedId: prepared.id,
+      digest: prepared.digest,
+    };
+    const run = unwrap(await f.service.handle(start, "once"), "run");
+    await vi.waitFor(async () => {
+      expect(
+        unwrap(
+          await f.service.handle({ operation: "read", runId: run.id }, "poll"),
+          "run",
+        ).state,
+      ).toBe("finished");
+    });
+    now = 24 * 60 * 60 * 1000;
+    const retained = unwrap(
+      await f.service.handle({ operation: "read", runId: run.id }, "later"),
+      "run",
+    );
+    expect(retained.resultPreview).toBe(true);
+    expect(retained.inputStatus).toBe("unchanged");
+    expect(
+      await f.service.handle(
+        { operation: "catalog", runId: run.id },
+        "catalog-later",
+      ),
+    ).toMatchObject({
+      ok: true,
+      catalog: { collection: "complete", datasets: [{ analysis: "op" }] },
+    });
+    const evidence = await f.files.readArtifact(
+      retained.artifacts.find((item) => item.role === "result")!.id,
+    );
+    if (!evidence.ok) throw Error(evidence.error.message);
+    expect(JSON.parse(evidence.text).log).toBe(log);
+    expect(unwrap(await f.service.handle(start, "once"), "run").id).toBe(
+      run.id,
+    );
+    expect(f.executor.execute).toHaveBeenCalledTimes(1);
+    expect(await f.service.handle(start, "new-start")).toMatchObject({
+      ok: false,
+      error: { code: "PREPARED_INPUT_UNAVAILABLE" },
+    });
+  });
   it("advertises the session concurrency limit and sequential batch path", async () => {
     const f = fixture("ngspice");
     expect(
@@ -254,80 +358,109 @@ describe("shared simulation lifecycle", () => {
     });
   });
 
-  it("delivers the same captured Spec report through run reads and artifacts", async () => {
-    const f = fixture("ngspice");
-    const source =
-      "Spec fixture\nV1 out 0 1\nR1 out 0 1k\n* @spec peak <= 2 unit=V\n.control\nop\nmeas tran peak MAX v(out)\nwrite out.raw all\n.endc\n.end\n";
-    vi.mocked(f.executor.execute).mockImplementation(async (input) => ({
-      result: { ...(await ngspiceResult(input)), log: "peak = 1.8" },
-      rawfile: "raw numbers",
-    }));
-    const { prepared } = await prepareRaw(f, source);
-    const started = unwrap(
-      await f.service.handle(
-        {
-          operation: "start",
-          preparedId: prepared.id,
-          digest: prepared.digest,
-        },
-        "spec-start",
-      ),
-      "run",
-    );
-    await vi.waitFor(async () =>
+  it.each(["complete", "partial"] as const)(
+    "delivers captured Specs and %s collection status through run reads and artifacts",
+    async (collectionStatus) => {
+      const f = fixture("ngspice");
+      const source =
+        "Spec fixture\nV1 out 0 1\nR1 out 0 1k\n* @spec peak <= 2 unit=V\n.control\nop\nmeas tran peak MAX v(out)\nwrite out.raw all\n.endc\n.end\n";
+      vi.mocked(f.executor.execute).mockImplementation(async (input) => ({
+        result: { ...(await ngspiceResult(input)), log: "peak = 1.8" },
+        rawfile: "raw numbers",
+        collectionStatus,
+      }));
+      const { prepared } = await prepareRaw(f, source);
+      const started = unwrap(
+        await f.service.handle(
+          {
+            operation: "start",
+            preparedId: prepared.id,
+            digest: prepared.digest,
+          },
+          "spec-start",
+        ),
+        "run",
+      );
+      await vi.waitFor(async () =>
+        expect(
+          unwrap(
+            await f.service.handle(
+              { operation: "read", runId: started.id },
+              "spec-read",
+            ),
+            "run",
+          ).state,
+        ).toBe("finished"),
+      );
+      const finished = unwrap(
+        await f.service.handle(
+          { operation: "read", runId: started.id },
+          "spec-final",
+        ),
+        "run",
+      );
+      expect(finished.outputData?.specs).toMatchObject({
+        runId: started.id,
+        preparedId: prepared.id,
+        inputDigest: prepared.digest,
+        results: [{ name: "peak", value: 1.8, judgment: "pass" }],
+      });
+      const artifact = finished.artifacts.find((a) => a.name === "specs.json")!;
+      expect(finished.catalog).toMatchObject({
+        runId: finished.id,
+        execution: "completed",
+        collection: collectionStatus,
+        files: expect.arrayContaining([
+          expect.objectContaining({ id: artifact.id, role: "specs" }),
+          expect.objectContaining({ name: "prepared.cir", role: "prepared" }),
+          expect.objectContaining({ name: "deck.cir", role: "source" }),
+        ]),
+      });
       expect(
-        unwrap(
-          await f.service.handle(
-            { operation: "read", runId: started.id },
-            "spec-read",
-          ),
-          "run",
-        ).state,
-      ).toBe("finished"),
-    );
-    const finished = unwrap(
-      await f.service.handle(
-        { operation: "read", runId: started.id },
-        "spec-final",
-      ),
-      "run",
-    );
-    expect(finished.outputData?.specs).toMatchObject({
-      runId: started.id,
-      preparedId: prepared.id,
-      inputDigest: prepared.digest,
-      results: [{ name: "peak", value: 1.8, judgment: "pass" }],
-    });
-    const artifact = finished.artifacts.find((a) => a.name === "specs.json")!;
-    const read = await f.files.handle({
-      action: "artifact",
-      artifactId: artifact.id,
-    });
-    if (!read.ok || !("text" in read)) throw Error("Missing Spec artifact");
-    expect(JSON.parse(read.text)).toEqual(finished.outputData?.specs);
-    expect(finished.artifacts.map((a) => a.name)).toEqual(
-      expect.arrayContaining(["out.raw", "specs.csv", "log.txt"]),
-    );
-    expect(finished.outputData).toEqual({
-      schemaVersion: 1,
-      analyses: [],
-      diagnostics: [],
-      specs: finished.outputData!.specs,
-    });
-    expect(
-      finished.artifacts
-        .filter((a) => a.name.endsWith(".csv"))
-        .map((a) => a.name)
-        .sort(),
-    ).toEqual(["op-0.csv", "specs.csv"]);
-    expect(finished.artifacts.map((a) => a.name)).not.toEqual(
-      expect.arrayContaining(["outputs.json"]),
-    );
-    expect(finished.artifacts.map((a) => a.name)).not.toEqual(
-      expect.arrayContaining(["native-measurements.json"]),
-    );
-    await f.service.clear();
-  });
+        await f.service.handle(
+          { operation: "catalog", runId: finished.id },
+          "catalog",
+        ),
+      ).toEqual({ ok: true, catalog: finished.catalog });
+      const manifest = await f.files.handle({
+        action: "artifact",
+        artifactId: finished.artifacts.find((a) => a.role === "manifest")!.id,
+      });
+      if (!manifest.ok || !("text" in manifest))
+        throw Error("Missing manifest");
+      expect(JSON.parse(manifest.text).catalog.collection).toBe(
+        collectionStatus,
+      );
+      const read = await f.files.handle({
+        action: "artifact",
+        artifactId: artifact.id,
+      });
+      if (!read.ok || !("text" in read)) throw Error("Missing Spec artifact");
+      expect(JSON.parse(read.text)).toEqual(finished.outputData?.specs);
+      expect(finished.artifacts.map((a) => a.name)).toEqual(
+        expect.arrayContaining(["out.raw", "specs.csv", "log.txt"]),
+      );
+      expect(finished.outputData).toEqual({
+        schemaVersion: 1,
+        analyses: [],
+        diagnostics: [],
+        specs: finished.outputData!.specs,
+      });
+      expect(
+        finished.artifacts
+          .filter((a) => a.name.endsWith(".csv"))
+          .map((a) => a.name)
+          .sort(),
+      ).toEqual(["op-0.csv", "specs.csv"]);
+      expect(finished.artifacts.map((a) => a.name)).not.toEqual(
+        expect.arrayContaining(["outputs.json"]),
+      );
+      expect(finished.artifacts.map((a) => a.name)).not.toEqual(
+        expect.arrayContaining(["native-measurements.json"]),
+      );
+      await f.service.clear();
+    },
+  );
   it("hands off one complete AC CSV and only authored metrics, with no automatic summaries", async () => {
     const f = fixture("ngspice");
     const source =
@@ -418,7 +551,8 @@ describe("shared simulation lifecycle", () => {
   it.each([false, true])(
     "runs a recoverable sequential batch (first run fails: %s)",
     async (firstRunFails) => {
-      const files = new SimulationFiles();
+      let now = 0;
+      const files = new SimulationFiles(() => now);
       const project = createEmptyProject("batch-project", "Batch", "doc");
       project.simulationFolders = ["A", "B"].map((name) =>
         sourceFolder(`folder-${name.toLowerCase()}`, name, {
@@ -455,7 +589,12 @@ describe("shared simulation lifecycle", () => {
         ),
         cancel: vi.fn(async () => releases.at(-1)?.()),
       };
-      const service = new SimulationService(files, executor, () => project);
+      const service = new SimulationService(
+        files,
+        executor,
+        () => project,
+        () => now,
+      );
       const preparedReply = await service.handle(
         {
           operation: "prepare-batch",
@@ -493,6 +632,11 @@ describe("shared simulation lifecycle", () => {
         batch: { id: preparedReply.batch.id, state: "running" },
       });
       await vi.waitFor(() => expect(executor.execute).toHaveBeenCalledTimes(1));
+      now = 60 * 60 * 1000;
+      await service.handle(
+        { operation: "read-batch", batchId: preparedReply.batch.id },
+        "late-poll",
+      );
       releases[0]!();
       await vi.waitFor(() => expect(executor.execute).toHaveBeenCalledTimes(2));
       releases[1]!();
@@ -514,6 +658,7 @@ describe("shared simulation lifecycle", () => {
         }),
       );
       expect(maxActive).toBe(1);
+      now += 24 * 60 * 60 * 1000;
       // Recover identifiers from the existing Batch resource rather than
       // submitting another start after a caller loses its transient Run IDs.
       const recovered = await service.handle(
@@ -522,6 +667,7 @@ describe("shared simulation lifecycle", () => {
       );
       if (!recovered.ok || !("batch" in recovered))
         throw Error(JSON.stringify(recovered));
+      expect(recovered.batch.expiresAt).toBeNull();
       expect(
         new Set(recovered.batch.items.map((item) => item.runId)).size,
       ).toBe(2);
@@ -763,6 +909,7 @@ describe("shared simulation lifecycle", () => {
         ok: true,
         batch: {
           state: "cancelled",
+          expiresAt: null,
           items: [{ state: "finished" }, { state: "cancelled" }],
         },
       }),
@@ -1250,6 +1397,14 @@ describe("shared simulation lifecycle", () => {
     await f.service.clear();
     expect(
       await f.service.handle({ operation: "read", runId: run.id }, "r2"),
+    ).toMatchObject({
+      ok: true,
+      run: { state: "lost", error: { code: "NETWORK_UNKNOWN" } },
+    });
+    expect(f.executor.execute).toHaveBeenCalledTimes(1);
+    f.files.clear();
+    expect(
+      await f.service.handle({ operation: "read", runId: run.id }, "r3"),
     ).toMatchObject({ ok: false, error: { code: "RUN_STATE_LOST" } });
   });
   it("cancel requests executor cleanup, and a late successful completion is not mislabeled cancelled", async () => {

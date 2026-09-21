@@ -9,6 +9,7 @@ import {
   type AgentFileResourceResponse,
 } from "@icm/agent-adapter";
 import { SimulationFiles } from "@icm/simulation-service/files";
+import type { ArtifactRef } from "@icm/simulation-service/contract";
 import type {
   ProjectTransaction,
   ProjectTransactionResult,
@@ -22,6 +23,7 @@ import type { SymbolResolver } from "@icm/symbols";
 import { prepareDocumentFormulaArtifacts } from "../features/text-editing/formula-artifacts";
 import { importChunk } from "../components/chunk-import";
 import { simulationFileEngine } from "../features/simulation/file-engine";
+import { createBrowserSimulationArtifactStore } from "../features/simulation/browser-simulation-artifact-store";
 
 type StoredCandidate = {
   project: CircuitProject;
@@ -43,13 +45,19 @@ export interface BrowserAgentFileHostOptions {
 
 /**
  * Browser-only endpoint for named File Resource requests. It owns short-lived
- * candidate bytes and parsed projects; the Worker only forwards typed messages.
+ * candidate bytes and parsed projects. Simulation downloads register immutable
+ * byte replicas with the existing authorized relay storage.
  * A staged candidate has no authority to replace the live project by itself.
  */
 export class BrowserAgentFileHost {
   readonly simulationFiles: SimulationFiles;
   private readonly candidates = new Map<string, StoredCandidate>();
   private readonly boundProjectSessionId: string;
+  setArtifactPublisher(
+    publisher: (ref: ArtifactRef, text: string) => Promise<string>,
+  ) {
+    this.simulationFiles.setArtifactPublisher(publisher);
+  }
 
   constructor(private readonly options: BrowserAgentFileHostOptions) {
     this.boundProjectSessionId = options.getProjectSessionId();
@@ -64,6 +72,9 @@ export class BrowserAgentFileHost {
           })
         : undefined,
       simulationFileEngine(options),
+      createBrowserSimulationArtifactStore(options.getProject().id, undefined, {
+        retainSession: true,
+      }),
     );
   }
 

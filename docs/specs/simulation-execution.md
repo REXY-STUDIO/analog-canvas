@@ -86,6 +86,32 @@ executed file bytes and the runtime fingerprint against admission, withholding
 mismatched evidence rather than retrying the process. Cancellation bypasses
 readiness checks; bounded refusal details and Retry-After remain available.
 
+Native executors attach an internal `x-analog-simulation-receipt` HTTP header
+to canonical run responses. It contains bounded, URI-encoded JSON (at most
+8192 ASCII characters): run token, terminal outcome, collection completeness,
+input/environment metadata, executed-file digest, body byte length and digest.
+It contains no waveforms and is not a second Run/Dataset/File catalog. The
+existing JSON response body and authenticated endpoints remain unchanged.
+The producer validates result/file relationships before emitting the receipt;
+the Worker checks its admission identity, input evidence and measured runtime
+before forwarding the length-bounded body stream. The managed queue writes
+that stream directly to R2 with its expected SHA-256, so corruption fails the
+write before the run can advertise retained results. This digest is transfer
+integrity, not an extra deployment-provenance check. The operator gateway
+preserves the receipt and applies backpressure and its configured byte limit.
+
+During rolling upgrades, an executor without this header still uses the
+existing bounded JSON validation path. Malformed or mismatched receipts fail;
+they do not silently fall back. Body interruption is an uncertain response,
+never permission to execute the run again. These streaming changes alone do
+not qualify large simulations. Updated callers negotiate `receipt-v1` with the
+`x-analog-execution-transfer` request header: the receipt-bound response ceiling
+is 256 MiB, while old buffered readers remain limited to 8 MiB. The operator
+gateway must forward that opt-in and allow 256 MiB streams. Collector budgets
+are separately advertised by the accepted runtime configuration; a client must
+not override them. The local configuration example budgets 64 MiB for collected
+output, leaving envelope space for parsed representations and JSON escaping.
+
 The model-library and legacy container sections below describe the retained
 ngspice baseline, not this native route. Their replacement Profile/image remains
 a separate migration obligation; they must not be used to register VACASK.
@@ -543,8 +569,11 @@ and diagnostic export, not duplicated beside its CSV in Explorer. Archived
 legacy output artifacts remain readable/exportable without being regenerated.
 
 Automatic retention and **Archive current run** capture a run's verified artifact
-set and compact presentation metadata in browser IndexedDB. At most ten runs
-per Project and 32 MiB per run are accepted. Opening an archive republishes its
+set and compact presentation metadata in browser IndexedDB. Saving a new run
+does not evict older run records, including session-only results whose storage
+failed. Archives accept up to 512 MiB per run, within browser quota and the shared
+1 GiB Project evidence budget. Individual evidence files allow 256 MiB, with
+only a bounded cache held in memory. Opening an archive republishes its
 verified files into the current session File Resource and decodes the ordinary
 result contracts; it does not rerun ngspice or silently substitute the current
 Project revision. Complete-run ZIP remains the portable/Agent-accessible

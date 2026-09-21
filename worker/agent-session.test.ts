@@ -59,6 +59,9 @@ it("requires no spending grant for static authoring help without relaxing run ac
     scopes({ operation: "start", preparedId: "p", digest: "a".repeat(64) }),
   ).toEqual(["simulation.run"]);
   expect(scopes({ operation: "read", runId: "r" })).toEqual(["simulation.run"]);
+  expect(scopes({ operation: "catalog", runId: "r" })).toEqual([
+    "simulation.run",
+  ]);
 });
 
 it("uses existing Project write authorization for Project-owned simulation source only", () => {
@@ -529,6 +532,7 @@ describe("public Agent session routes", () => {
     expect(Object.keys(contract.paths).sort()).toEqual([
       "/api/agent/claims",
       "/api/agent/connectors/resume",
+      "/api/agent/sessions/{sessionId}/artifacts/{fileId}",
       "/api/agent/sessions/{sessionId}/circuit",
       "/api/agent/sessions/{sessionId}/files",
       "/api/agent/sessions/{sessionId}/projects",

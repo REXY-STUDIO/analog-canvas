@@ -64,6 +64,54 @@ async function nativeNumericReply(input: ExecutionInput) {
   });
 }
 describe("MCP / browser Simulation Resource parity", () => {
+  it("remembers custom bases per Project, never presents the last Project as the current one, and permits offline inspection", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "icm-workspace-scope-"));
+    const client = new AgentSessionClient({ http: new FakeAgentHttp() });
+    await client.connect("session-1.code");
+    const initial = await client.status();
+    let projectId: string | null = "project-a";
+    vi.spyOn(client, "status").mockImplementation(async () => ({
+      ...initial,
+      projectId,
+      sessionId: projectId ? "new-session" : null,
+    }));
+    const state = { client };
+    const invoke = async (basePath?: string) => {
+      const reply = await callTool(
+        "simulation_files",
+        { request: { action: "workspace" }, ...(basePath ? { basePath } : {}) },
+        state,
+      );
+      return JSON.parse(reply.content[0]!.text!);
+    };
+    try {
+      const a = join(directory, "a");
+      const b = join(directory, "b");
+      expect(await invoke(a)).toMatchObject({
+        basePath: a,
+        projectId: "project-a",
+      });
+      projectId = "project-b";
+      expect(await invoke(b)).toMatchObject({
+        basePath: b,
+        projectId: "project-b",
+      });
+      projectId = "project-a";
+      expect(await invoke()).toMatchObject({
+        basePath: a,
+        projectId: "project-a",
+      });
+      const wrong = await invoke(b);
+      expect(JSON.stringify(wrong)).toContain("WORKSPACE_PROJECT_MISMATCH");
+      projectId = null;
+      expect(await invoke()).toMatchObject({
+        basePath: a,
+        projectId: "project-a",
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
   it("returns the generated start identity after a lost response so the same session can retry safely", async () => {
     const http = new FakeAgentHttp();
     const client = new AgentSessionClient({ http });
@@ -226,7 +274,20 @@ describe("MCP / browser Simulation Resource parity", () => {
         return response!;
       },
     });
+    const transfers = new Map<string, string>();
+    files.setArtifactPublisher(async (ref, text) => {
+      const path = `/api/agent/sessions/session-1/artifacts/${ref.fileId ?? ref.id}`;
+      transfers.set(path, text);
+      return path;
+    });
     class Relay extends FakeAgentHttp {
+      override async downloadArtifact(
+        _session: string,
+        _token: string,
+        path: string,
+      ) {
+        return new Response(transfers.get(path) ?? null);
+      }
       override async simulation(
         _session: string,
         _token: string,
@@ -257,8 +318,9 @@ describe("MCP / browser Simulation Resource parity", () => {
     });
     const client = new AgentSessionClient({ http });
     await client.connect("session-1.code");
+    const toolState = { client };
     const invoke = async (name: string, args: unknown) => {
-      const reply = await callTool(name, args, { client });
+      const reply = await callTool(name, args, toolState);
       return JSON.parse(reply.content[0]!.text!);
     };
     try {
@@ -338,6 +400,17 @@ describe("MCP / browser Simulation Resource parity", () => {
         expect(finished.run.state).toBe("finished");
       });
       expect(executions).toBe(1);
+      await vi.waitFor(async () =>
+        expect(
+          await invoke("simulation", {
+            request: { operation: "history" },
+          }),
+        ).toMatchObject({
+          ok: true,
+          runs: [{ runId: started.run.id }],
+          nextCursor: null,
+        }),
+      );
       expect(finished.run.state, JSON.stringify(finished)).toBe("finished");
       expect(finished.run.result.data.analyses[0].probes).toEqual(
         expect.arrayContaining([
@@ -357,6 +430,32 @@ describe("MCP / browser Simulation Resource parity", () => {
       // This captured raw record declares "notype" and the textual fixture has
       // no typed acquisition. Preserve an unknown unit rather than invent one.
       expect((await readFile(path, "utf8")).split("\n")).toContain("output,2,");
+      const download = vi.spyOn(http, "downloadArtifact");
+      const basePath = join(directory, "workspace");
+      const synced = await invoke("simulation_files", {
+        request: { action: "sync", runId: started.run.id },
+        basePath,
+      });
+      expect(synced).toMatchObject({
+        ok: true,
+        basePath,
+        downloadedFiles: finished.run.artifacts.length,
+      });
+      expect(synced.files).toHaveLength(finished.run.artifacts.length);
+      expect(
+        await invoke("simulation_files", { request: { action: "workspace" } }),
+      ).toMatchObject({ ok: true, basePath });
+      download.mockClear();
+      const reused = await invoke("simulation_files", {
+        request: { action: "sync", runId: started.run.id },
+      });
+      expect(reused.ok, JSON.stringify(reused.error)).toBe(true);
+      expect(
+        reused.files.every((file: { reused: boolean }) => file.reused),
+      ).toBe(true);
+      expect(download).not.toHaveBeenCalled();
+      const localIndex = JSON.parse(await readFile(synced.indexPath, "utf8"));
+      expect(localIndex.runs[0].runId).toBe(started.run.id);
       expect(http.claims).toHaveLength(1);
     } finally {
       await host.clear();

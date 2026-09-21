@@ -38,13 +38,34 @@ analyses or code. Basic OP/DC/AC/TRAN code needs no dedicated helper call.
    Reuse the same outer request ID and payload for a transport retry.
    `read` / `cancel` use `runId`; each new poll has a new request ID.
    `inputStatus` reports later edits without rewriting that run's evidence.
-6. Use complete `result.data` directly. Run receipts already carry artifact
-   references; `export` is only needed to obtain a missing or refreshed inventory.
-   `simulation_files` with
-   `request:{action:"artifact",artifactId}` reads paged content; `outputPath`
-   saves complete bytes after length/SHA-256 verification. Deck, rawfile,
-   JSON, log and CSV share this File Resource. Large receipts set
-   `resultPreview`; full result/output artifacts remain available.
+6. Use `simulation_files` with `request:{action:"sync",runId}` to obtain the
+   catalog and download complete files into a local base. No path question is
+   required: the default lives under the MCP process working directory's
+   `.analog-canvas/` and is isolated by server and Project within the MCP host's
+   working directory. Reconnection or MCP restart reuses that default Project
+   base; a changed authorization session does not move downloaded evidence.
+   Explicit `basePath` choices are remembered per Project while the MCP process
+   lives. Existing older session-named bases remain readable by supplying their
+   path; nothing is moved or deleted automatically. The reply gives the
+   absolute base/index/work paths and identifies the filesystem as `mcp-host`.
+   That host must share a filesystem with the Agent's local analysis tools;
+   a remote MCP path is not automatically accessible from the Agent runtime.
+   Optionally set `basePath` once; this MCP session remembers it.
+   Files are flat within each run directory, and `work/`
+   is for scripts and plots. Use ordinary local tools for analysis afterwards.
+   Set `fileIds` to select stable file IDs or current artifact IDs; `[]` updates
+   only the directory. Verified existing files are reused without re-downloading.
+   `request:{action:"workspace"}` inspects the base, even offline when its path
+   is known. A new MCP conversation can provide that path to continue. Local
+   files survive disconnect; the host, not the browser, controls their retention.
+   This is not an automatic source upload or a second circuit authority.
+7. For an individual file, `request:{action:"download",artifactId}` saves it
+   into the base; `outputPath` overrides its destination. Downloads stream to a
+   resumable partial file and only publish complete verified bytes, without
+   replacing unrelated files. `request:{action:"artifact",artifactId}` without
+   `outputPath` remains an optional text preview. `simulation` / `catalog` gives
+   dataset axes, units, representation selectors and file roles without samples.
+   `read` is for status and diagnostics, not the primary waveform transfer.
    For result fields, measurement verdicts and canonical output files, read
    [Spec rules](../simulation-specs.md). Browser visibility, archival limits
    and durable delivery follow [result handoff](../simulation-result-handoff.md).
@@ -81,6 +102,23 @@ with that digest. `circuitEdits:[{path,textDigest,text}]` maps only reported
 editable numeric fields to normal parameter transactions; topology edits go
 through Canvas APIs. Project file writes require `project.import`; mapped
 circuit changes additionally require connectivity editing authority.
+
+For small edits prefer `update.replacements:[{path,textDigest,oldText,newText}]`.
+Each nonempty `oldText` must match exactly once in the original file, including
+whitespace and line endings. Multiple replacements use the same original text,
+not each other's output. Zero/multiple matches, stale digests and overlapping
+edits reject the whole batch. Full writes and UTF-16 patches remain available.
+The returned `source.revision` is ready for the next update or prepare; `update`
+reports `changed`, actual created/updated/removed files and their new digests and
+byte lengths (removed files have no digest). `mappedCircuitPaths` separately
+reports generated paths involved in parameter changes. Entry/config/draft-only
+changes may have `changed:true` with no file entries. No-op saves do not advance
+revision. Do not reread solely to verify a successful commit.
+Listings advertise `editing`: `text`, `mapped-parameters`, or `read-only`.
+Located edit failures include `fileEdit.applied:false` and the path when known;
+replacement failures also identify the replacement array index and match count
+when applicable. Revision conflicts return expected/current revisions when
+available. Invalid native code can still be saved; prepare performs validation.
 
 For an expiring graphless session workspace, call File `create`, then
 `update` with `owner:{kind:"session-workspace",workspaceId}`,

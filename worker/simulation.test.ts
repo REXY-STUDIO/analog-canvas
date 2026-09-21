@@ -10,6 +10,7 @@ import {
   nativeInput,
   nativeReply,
   nativeWorkerEnv,
+  nativeStreamingReply,
 } from "./simulation.test-fixture";
 const post = (body: unknown, path = "/api/simulate") =>
   new Request(`https://canvas.test${path}`, {
@@ -20,6 +21,23 @@ const post = (body: unknown, path = "/api/simulate") =>
 afterEach(() => vi.unstubAllGlobals());
 
 describe("native simulation route", () => {
+  it("rejects a streaming receipt bound to another run before exposing bytes", async () => {
+    const input = {
+      ...nativeInput(),
+      runToken: "11111111-1111-1111-1111-111111111111",
+    };
+    const env = nativeWorkerEnv(async (_url, init) =>
+      nativeStreamingReply({
+        ...JSON.parse(String(init?.body)),
+        runToken: "22222222-2222-2222-2222-222222222222",
+      }),
+    );
+    const response = await routeSimulationRequest(post(input), env);
+    expect(response!.status).toBe(502);
+    expect(await response!.json()).toMatchObject({
+      error: "simulator-protocol-invalid",
+    });
+  });
   it("keeps absence unconfigured, ignores other paths and rejects malformed operations", async () => {
     expect(await routeSimulationRequest(post({}, "/elsewhere"), {})).toBeNull();
     expect(
@@ -195,6 +213,22 @@ describe("native simulation route", () => {
       expect((await response!.json()).outcome.status).toBe(status);
     },
   );
+  it("preserves collector partial status independently of a successful process", async () => {
+    const response = await routeSimulationRequest(
+      post(nativeInput()),
+      nativeWorkerEnv(async () =>
+        Response.json({
+          ...(await nativeReply()),
+          collectionStatus: "partial",
+        }),
+      ),
+    );
+    expect(response!.status).toBe(200);
+    expect(await response!.json()).toMatchObject({
+      outcome: { status: "completed" },
+      collectionStatus: "partial",
+    });
+  });
   it.each(["environment", "input", "files", "legacy-result", "malformed"])(
     "withholds invalid %s result evidence without retry",
     async (fault) => {
@@ -337,6 +371,10 @@ describe("native simulation route", () => {
             "Bearer operator-token",
           );
           expect(init?.redirect).toBe("manual");
+          if (new URL(String(url)).pathname === "/run")
+            expect(
+              new Headers(init?.headers).get("x-analog-execution-transfer"),
+            ).toBe("receipt-v1");
           return new URL(String(url)).pathname === "/health"
             ? Response.json(nativeHealth)
             : Response.json(await nativeReply());

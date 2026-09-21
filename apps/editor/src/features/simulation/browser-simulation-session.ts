@@ -8,9 +8,10 @@ import type {
 import type { SimulationService } from "@icm/simulation-service";
 import type { Prepared } from "@icm/simulation-service/contract";
 import type { ProjectRunHistory } from "./project-run-history";
-import { sourcePresentation } from "./source-presentation";
+import type { sourcePresentation } from "./source-presentation";
 import { serializeProject } from "@icm/project-protocol";
 import { simulationFileEngine } from "./file-engine";
+import { createBrowserSimulationArtifactStore } from "./browser-simulation-artifact-store";
 
 /** Do not export a pre-prepare Project when editing raced with compilation. */
 export function unchangedProjectSnapshot(
@@ -57,6 +58,11 @@ export class BrowserSimulationSession {
         Date.now,
         options.projectFiles,
         simulationFileEngine(options),
+        createBrowserSimulationArtifactStore(
+          options.getProject().id,
+          undefined,
+          { retainSession: true },
+        ),
       );
   }
   async clear() {
@@ -120,7 +126,10 @@ export class BrowserSimulationSession {
           if (generation === this.generation) this.service = undefined;
           throw error;
         });
-      const service = await this.service;
+      const [service, { sourcePresentation }] = await Promise.all([
+        this.service,
+        import("./source-presentation"),
+      ]);
       if (
         generation !== this.generation ||
         this.options.getProjectSessionId() !== this.projectSessionId
