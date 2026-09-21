@@ -2840,12 +2840,8 @@ test("connects copied multi-pin groups through a manually bent wire", async ({
     .poll(() => recoveryProjectTexts(page))
     .toContain(`"revision": ${revision}`);
   await page.reload();
-  const fileMenu = await openMenu(page, "File");
-  await fileMenu.getByRole("button", { name: "Recover Unsaved Work…" }).click();
-  await page
-    .getByRole("dialog", { name: "Recover recent work" })
-    .getByRole("button", { name: "Restore" })
-    .click();
+  // Refresh restores this window's workspace without a second manual restore.
+  await awaitEditorReady(page);
   await expect(page.getByTestId("instance-count")).toHaveText("4");
 
   await clickDrawTool(page, "wire");
@@ -4826,12 +4822,8 @@ test("uses automatic recovery and guards shortcuts while typing", async ({
     .toContain('"revision": 1');
 
   await page.reload();
-  const fileMenu = await openMenu(page, "File");
-  await fileMenu.getByRole("button", { name: "Recover Unsaved Work…" }).click();
-  await page
-    .getByRole("dialog", { name: "Recover recent work" })
-    .getByRole("button", { name: "Restore" })
-    .click();
+  // Refresh restores this window's workspace without a second manual restore.
+  await awaitEditorReady(page);
   await expect(page.getByTestId("revision")).toHaveText("1");
 
   await page.keyboard.press("i");
@@ -6618,4 +6610,96 @@ test("keeps the chosen corner shape when the wire tool is picked again", async (
   expect(dx).toBeGreaterThan(0);
   expect(dy).toBeGreaterThan(0);
   expect(dx).not.toBe(dy);
+});
+
+test("Net Label overbars synchronize a trailing _bar through source edits, undo and reload", async ({
+  page,
+}) => {
+  await page.goto("/editor");
+  await placeComponent(page, "resistor", { x: 280, y: 180 });
+  await placeComponent(page, "resistor", { x: 480, y: 180 });
+  await clickDrawTool(page, "wire");
+  await page.getByTestId("terminal-R1-1").click();
+  await page.getByTestId("terminal-R2-1").click();
+  await page.keyboard.press("Escape");
+  await clickDrawTool(page, "wire");
+  await page.getByTestId("terminal-R1-2").click();
+  await page.getByTestId("terminal-R2-2").click();
+  await page.keyboard.press("Escape");
+  await clickRoute(page, "route-ui-1", 0.5, 0);
+  await openSelectionShelf(page);
+  await editComponentPropertyCode(page, (code) => {
+    code.name = "F";
+  });
+  const hit = page.getByTestId("annotation-hit-net-label-route-ui-1");
+  const label = page.locator(
+    '[data-layer="annotations"] [data-object-id="net-label-route-ui-1"]',
+  );
+  const bar = label.locator("..").locator('[data-text-decoration="overbar"]');
+  await hit.dblclick();
+  const editor = page.getByRole("textbox", { name: "Canvas text editor" });
+  await editor.press("ControlOrMeta+a");
+  await page.getByRole("button", { name: "Overbar", exact: true }).click();
+  await expect(editor.locator('[data-rich-text-style="overbar"]')).toHaveCount(
+    1,
+  );
+  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await expect(bar).toHaveCount(1);
+  await expect(label).toHaveText("F");
+  const saved = await downloadBytes(page, "File", "Export Project File…");
+  const document = parseSavedProject(saved.toString()).documents[0];
+  expect(document.connectivityEvidence).toContainEqual(
+    expect.objectContaining({ kind: "name-claim", name: "F_bar" }),
+  );
+  await page.getByTestId("draw-tool-undo").click();
+  await expect(bar).toHaveCount(0);
+  await page.getByTestId("draw-tool-redo").click();
+  await expect(bar).toHaveCount(1);
+  await page.getByTestId("project-file").setInputFiles({
+    name: "overbar.icproj.json",
+    mimeType: "application/json",
+    buffer: saved,
+  });
+  const discard = page.getByRole("button", {
+    name: "Continue without saving",
+    exact: true,
+  });
+  await discard.click();
+  await expect(bar).toHaveCount(1);
+  // Open the netlist panel to verify both formats carry the same spelling.
+  if (
+    (await page
+      .getByTestId("netlist-panel-toggle")
+      .getAttribute("aria-pressed")) !== "true"
+  )
+    await page.getByTestId("netlist-panel-toggle").click();
+  const code = page.getByLabel("Netlist code", { exact: true });
+  await expect(code).toContainText("F_bar");
+  await page
+    .getByLabel("Netlist format", { exact: true })
+    .selectOption("spice");
+  await expect(code).toContainText("F_bar");
+  await page
+    .getByLabel("Netlist format", { exact: true })
+    .selectOption("spectre");
+  await clickRoute(page, "route-ui-1", 0.5, 0);
+  await openSelectionShelf(page);
+  await editComponentPropertyCode(page, (code) => {
+    code.name = "Q_bar";
+  });
+  await expect(label).toHaveText("Q");
+  await expect(bar).toHaveCount(1);
+  await hit.dblclick();
+  await editor.press("ControlOrMeta+a");
+  await page.getByRole("button", { name: "Overbar", exact: true }).click();
+  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await expect(bar).toHaveCount(0);
+  await clickRoute(page, "route-ui-1", 0.5, 0);
+  await openSelectionShelf(page);
+  await editComponentPropertyCode(page, (code) => {
+    code.name = "Q_in_bar";
+  });
+  await expect(bar).toHaveCount(1);
+  await expect(label).toHaveText("Qin");
+  await expect(label.locator('[data-text-run="subscript"]')).toHaveText("in");
 });
