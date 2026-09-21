@@ -1027,7 +1027,8 @@ test("previews copied text upright and commits its pose atomically", async ({
     origin.y + origin.height / 2,
   );
   await page.keyboard.press("c");
-  await expect(page.getByTestId("status")).toContainText("Place copy");
+  await page.keyboard.press("v");
+  await expect(page.getByTestId("status")).toContainText("click to place");
 
   const box = (await canvas.boundingBox())!;
   const ghost = page.getByTestId("copy-placement-preview");
@@ -1053,6 +1054,7 @@ test("previews copied text upright and commits its pose atomically", async ({
     origin.y + origin.height / 2,
   );
   await page.keyboard.press("c");
+  await page.keyboard.press("v");
   await page.mouse.move(box.x + 420, box.y + 380);
   await page.keyboard.press("r");
   await expect(previewText).toBeInViewport();
@@ -1635,15 +1637,29 @@ test("the Library Circle creates a selectable shape with one radial handle and n
   await revealPropertiesShelf(page);
   await awaitEditorReady(page);
   await clickDrawTool(page, "circle");
-  await clickCreate(page, { x: 260, y: 260 }, { x: 340, y: 260 });
+  // Author a known 80-unit radius in SVG coordinates, independent of tab-bar
+  // height, viewport fitting and platform-specific browser chrome.
+  const points = await page
+    .getByTestId("schematic-canvas")
+    .evaluate((element) => {
+      const matrix = (element as SVGSVGElement).getScreenCTM()!;
+      return [new DOMPoint(260, 260), new DOMPoint(340, 260)].map((point) => {
+        const screen = point.matrixTransform(matrix);
+        return { x: screen.x, y: screen.y };
+      });
+    });
+  await page.mouse.click(points[0]!.x, points[0]!.y);
+  await page.mouse.move(points[1]!.x, points[1]!.y);
+  await page.mouse.click(points[1]!.x, points[1]!.y);
+  await page.keyboard.press("Enter");
   await expect(page.getByTestId("revision")).toHaveText("1");
 
   const circle = page.locator('[data-kind="draft-circle"]');
   await expect(circle).toHaveCount(1);
   await expect(circle).toHaveAttribute("fill", "none");
-  // The default 5-unit annotation pitch resolves this gesture half a grid
-  // finer than the old device-grid rounding did.
-  await expect(circle).toHaveAttribute("r", "85");
+  await expect(circle).toHaveAttribute("cx", "260");
+  await expect(circle).toHaveAttribute("cy", "260");
+  await expect(circle).toHaveAttribute("r", "80");
 
   const hit = page.getByTestId(/^drafting-hit-circle-/);
   await expect(hit).toHaveCSS("pointer-events", "stroke");

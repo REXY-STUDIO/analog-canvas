@@ -31,7 +31,9 @@
       "apps/editor/e2e/instance-table.spec.ts",
       "apps/editor/e2e/manual-editor.spec.ts",
       "apps/editor/e2e/reference-label.spec.ts",
-      "apps/editor/e2e/manual-editor-fixtures.ts"
+      "apps/editor/e2e/manual-editor-fixtures.ts",
+      "apps/editor/src/features/editor-shell/document-settings*",
+      "packages/derived/src/annotation-text*"
     ],
     "editorCommands": [
       "apps/editor/src/app/editor-transaction-commands*",
@@ -82,7 +84,9 @@
       "apps/editor/src/canvas/editor-wiring-overlay*",
       "apps/editor/src/features/wiring/**",
       "packages/derived/src/contact-target*",
-      "apps/editor/e2e/wiring-semantics.spec.ts"
+      "apps/editor/e2e/wiring-semantics.spec.ts",
+      "packages/derived/src/connectivity.ts",
+      "packages/derived/src/connectivity-index.ts"
     ],
     "placementNearMiss": [
       "apps/editor/src/features/component-insert/placement-near-miss*"
@@ -122,14 +126,19 @@
       "packages/render-svg/**"
     ],
     "projectPersistence": [
+      "apps/editor/src/features/clipboard/**",
       "apps/editor/src/document/**",
       "apps/editor/e2e/auto-fit.spec.ts",
       "apps/editor/e2e/project-file.spec.ts",
+      "apps/editor/e2e/project-tabs.spec.ts",
       "apps/editor/e2e/recovery-dialog.spec.ts",
       "apps/editor/e2e/recovery-hardening.spec.ts",
       "packages/model/**",
       "packages/project-protocol/**",
-      "apps/editor/e2e/project-source-format.spec.ts"
+      "apps/editor/e2e/project-source-format.spec.ts",
+      "apps/editor/src/features/editor-shell/project-tabs*",
+      "apps/editor/src/features/project-code/**",
+      "apps/editor/src/components/recovery-banners.tsx"
     ],
     "gallery": [
       "worker/auth.ts",
@@ -152,7 +161,19 @@
       "apps/editor/src/features/editor-shell/gallery-publish.test.ts",
       "apps/editor/src/features/editor-shell/publish-gallery-dialog.tsx",
       "apps/editor/src/features/editor-shell/publish-gallery-dialog.test.tsx",
-      "apps/editor/e2e/gallery.spec.ts"
+      "apps/editor/e2e/gallery.spec.ts",
+      "worker/gallery-do.ts",
+      "apps/editor/src/components/gallery-version-*",
+      "apps/editor/src/components/version-history-*",
+      "apps/editor/src/components/shelf-wall.tsx",
+      "apps/editor/src/features/editor-shell/cloud-projects*",
+      "apps/editor/src/features/editor-shell/gallery-topology-*",
+      "apps/editor/src/features/editor-shell/publish-gallery-dialog.css",
+      "apps/editor/src/gallery-topology-match*",
+      "apps/editor/src/gallery.css",
+      "packages/netlist/src/equivalence.ts",
+      "packages/netlist/src/index.ts",
+      "packages/netlist/src/topology-correspondence*"
     ],
     "agent": [
       "apps/editor/src/agent/**",
@@ -360,12 +381,14 @@
       "command": [
         "pnpm",
         "test:e2e:local",
-        "apps/editor/e2e/project-file.spec.ts"
+        "apps/editor/e2e/project-file.spec.ts",
+        "apps/editor/e2e/project-tabs.spec.ts"
       ],
       "ci": {
         "e2eArgs": [
           "apps/editor/e2e/auto-fit.spec.ts",
           "apps/editor/e2e/project-file.spec.ts",
+          "apps/editor/e2e/project-tabs.spec.ts",
           "apps/editor/e2e/recovery-dialog.spec.ts",
           "apps/editor/e2e/recovery-hardening.spec.ts",
           "apps/editor/e2e/project-source-format.spec.ts"

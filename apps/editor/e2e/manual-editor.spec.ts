@@ -294,6 +294,7 @@ async function copySelectionAt(
   const box = await canvas.boundingBox();
   if (!box) throw new Error("Canvas is not measurable");
   await page.keyboard.press("c");
+  await page.keyboard.press("v");
   await page.mouse.move(box.x + position.x, box.y + position.y);
   await expect(page.getByTestId("copy-placement-preview")).toBeVisible();
   await canvas.click({ position });
@@ -830,19 +831,14 @@ test("constructs VDD as a drawn dotless power rail", async ({ page }) => {
   await expect(canvas.locator('[data-symbol-id="vdd"]')).toHaveCount(0);
   const powerLabel = canvas.locator('[data-kind="power-label"]');
   await expect(powerLabel).toHaveText("VDD");
-  await expect(powerLabel.locator('[data-text-run="subscript"]')).toHaveText(
-    "DD",
+  await expect(powerLabel.locator('[data-text-run="subscript"]')).toHaveCount(
+    0,
   );
   await expect(
     powerLabel.locator(
       '[data-text-run="span"][style*="font-style:italic"][style*="font-weight:700"]',
     ),
-  ).toHaveText("V");
-  await expect(
-    powerLabel.locator(
-      '[data-text-run="subscript"] [data-text-run="span"][style*="font-style:normal"][style*="font-weight:700"]',
-    ),
-  ).toHaveText("DD");
+  ).toHaveText("VDD");
   await expect(page.getByTestId("component-input-plane")).toHaveCount(0);
 
   await page.keyboard.press("Delete");
@@ -1241,19 +1237,17 @@ test("P shortcut starts Cell Pin placement", async ({ page }) => {
     inputLabel.locator(
       '[data-text-run="span"][style*="font-style:italic"][style*="font-weight:700"]',
     ),
-  ).toHaveText("V");
-  await expect(
-    inputLabel.locator(
-      '[data-text-run="subscript"] [data-text-run="span"][style*="font-style:normal"][style*="font-weight:700"]',
-    ),
-  ).toHaveText("inp");
+  ).toHaveText("Vinp");
+  await expect(inputLabel.locator('[data-text-run="subscript"]')).toHaveCount(
+    0,
+  );
 
   await canvas.click({ position: { x: 520, y: 180 } });
   await expect(page.getByTestId("status")).toContainText("Added Cell Pin Vinn");
   const outputLabel = page.locator('[data-object-id="instance-label-P2"]');
   await expect(outputLabel).toHaveText("Vinn");
-  await expect(outputLabel.locator('[data-text-run="subscript"]')).toHaveText(
-    "inn",
+  await expect(outputLabel.locator('[data-text-run="subscript"]')).toHaveCount(
+    0,
   );
   await page.keyboard.press("Escape");
 
@@ -1275,11 +1269,9 @@ test("P shortcut starts Cell Pin placement", async ({ page }) => {
   const secondBias = page.locator('[data-object-id="instance-label-P4"]');
   await expect(firstBias).toHaveText("VB1");
   await expect(secondBias).toHaveText("VB2");
-  await expect(firstBias.locator('[data-text-run="subscript"]')).toHaveText(
-    "B1",
-  );
-  await expect(secondBias.locator('[data-text-run="subscript"]')).toHaveText(
-    "B2",
+  await expect(firstBias.locator('[data-text-run="subscript"]')).toHaveCount(0);
+  await expect(secondBias.locator('[data-text-run="subscript"]')).toHaveCount(
+    0,
   );
   await openSelectionShelf(page);
   await expect(
@@ -2195,14 +2187,31 @@ test("changes wire line style while preserving color, arrow, export and undo", a
   const svg = (await downloadBytes(page, "File", "Export SVG")).toString(
     "utf8",
   );
-  // The exported conductor is one shape per paint: the Route's identity is on
-  // its own element, the dash on the ink that carries its run.
-  expect(svg).toMatch(
-    /<polyline[^>]*data-object-id="route-ui-1"[^>]*points="310,250 480,250 480,210 650,210"/u,
+  // Export must reproduce the authored world geometry regardless of the
+  // toolbar/sidebar dimensions used to place it on screen.
+  const liveRoute = page.locator(
+    '[data-layer="routes"] polyline[data-object-id="route-ui-1"]',
   );
-  expect(svg).toMatch(
-    /<path data-role="conductor-ink"[^>]*M 310 250 L 480 250 L 480 210 L 650 210[^>]*stroke-dasharray="2 3"/u,
-  );
+  const points = await liveRoute.getAttribute("points");
+  const ink = await page
+    .locator('[data-layer="routes"] [data-role="conductor-ink"]')
+    .first()
+    .getAttribute("d");
+  expect(points).toBeTruthy();
+  expect(ink).toBeTruthy();
+  const exported = await page.evaluate((source) => {
+    const svg = new DOMParser().parseFromString(source, "image/svg+xml");
+    return {
+      points: svg
+        .querySelector('polyline[data-object-id="route-ui-1"]')
+        ?.getAttribute("points"),
+      ink: svg.querySelector('[data-role="conductor-ink"]')?.getAttribute("d"),
+      dash: svg
+        .querySelector('[data-role="conductor-ink"]')
+        ?.getAttribute("stroke-dasharray"),
+    };
+  }, svg);
+  expect(exported).toEqual({ points, ink, dash: "2 3" });
   expect(svg).toContain('data-role="route-direction-arrow"');
   const pdf = await downloadBytes(page, "File", "Export PDF");
   expect(pdf.subarray(0, 5).toString("ascii")).toBe("%PDF-");
@@ -3332,7 +3341,7 @@ test("edits instance, electrical Net, and free text with bounded label handles",
   expect(afterBox?.x).not.toBe(beforeBox.x);
 });
 
-test("formats a Net Label without changing its electrical Net name", async ({
+test("synchronizes a Net Label subscript with its electrical underscore name", async ({
   page,
 }) => {
   await page.goto("/editor");
@@ -3382,7 +3391,7 @@ test("formats a Net Label without changing its electrical Net name", async ({
   expect(saved.documents[0].connectivityEvidence).toContainEqual(
     expect.objectContaining({
       kind: "name-claim",
-      name: "VB",
+      name: "V_B",
       owner: {
         kind: "net-label",
         annotationId: "net-label-route-ui-1",
@@ -3393,7 +3402,7 @@ test("formats a Net Label without changing its electrical Net name", async ({
     saved.documents[0].annotations.find(
       (candidate: { id: string }) => candidate.id === "net-label-route-ui-1",
     ).formatOverride,
-  ).toBeDefined();
+  ).toBeUndefined();
 
   await page.getByTestId("project-file").setInputFiles({
     name: "rich-net-label.icproj.json",
@@ -4057,7 +4066,7 @@ test("R rotates a selected component instead of entering Rectangle", async ({
   await expect(page.getByTestId("revision")).toHaveText("4");
 });
 
-test("C inserts a fresh device instead of copying its name alias and source connections", async ({
+test("C/V preserves display aliases but detaches unselected connections and allocates a unique reference", async ({
   page,
 }) => {
   await page.goto("/editor");
@@ -4088,12 +4097,19 @@ test("C inserts a fresh device instead of copying its name alias and source conn
   const copy = document.instances.find(
     (instance) => instance.id !== "R1" && instance.id !== "R2",
   )!;
-  expect(copy.reference).toBe("R1");
+  expect(copy.reference).not.toBe("R99");
+  expect(new Set(document.instances.map((item) => item.reference)).size).toBe(
+    3,
+  );
   expect(
     document.nets
-      .flatMap((net) => net.terminals)
-      .some((terminal) => terminal.instanceId === copy.id),
-  ).toBe(false);
+      .filter((net) =>
+        net.terminals.some((terminal) => terminal.instanceId === copy.id),
+      )
+      .every((net) =>
+        net.terminals.every((terminal) => terminal.instanceId === copy.id),
+      ),
+  ).toBe(true);
   expect(document.routes).toHaveLength(1);
   const annotation = document.annotations.find(
     (item) =>
@@ -4101,22 +4117,24 @@ test("C inserts a fresh device instead of copying its name alias and source conn
       item.anchor.objectId === copy.id &&
       item.kind === "instance-label",
   )!;
-  expect(annotation.content).toBeUndefined();
-  expect(annotation.binding).toEqual({
-    kind: "instance-reference",
-    instanceId: copy.id,
-  });
+  expect(annotation.content).toBeDefined();
+  // An explicit display alias stays authored text, independent of the fresh netlist name.
+  expect(annotation.binding).toBeUndefined();
+  expect(annotation.content).toEqual(
+    document.annotations.find((item) => item.id === "instance-label-R1")!
+      .content,
+  );
   await expect(
     page.locator(
       `[data-layer="annotations"] [data-object-id="${annotation.id}"]`,
     ),
-  ).toContainText("R1");
+  ).toContainText("Old_alias");
   await page.keyboard.press("Escape");
   await page.keyboard.press("Control+z");
   await expect(page.getByTestId("instance-count")).toHaveText("2");
 });
 
-test("C previews one copy and Escape cancels without a revision", async ({
+test("C/V previews one copy and Escape cancels without a revision", async ({
   page,
 }) => {
   await page.goto("/editor");
@@ -4127,9 +4145,11 @@ test("C previews one copy and Escape cancels without a revision", async ({
   const box = await canvas.boundingBox();
   if (!box) throw new Error("Canvas is not measurable");
   await page.keyboard.press("c");
+  await page.keyboard.press("v");
   await page.mouse.move(box.x + 560, box.y + 340);
   await expect(page.getByTestId("copy-placement-preview")).toBeVisible();
   await page.keyboard.press("c");
+  await page.keyboard.press("v");
   await expect(page.getByTestId("copy-placement-preview")).toBeVisible();
   await page.keyboard.press("Escape");
 
@@ -4155,6 +4175,7 @@ test("copy ghost follows each pointer position and commits over existing geometr
     throw new Error("Canvas objects are not measurable");
 
   await page.keyboard.press("c");
+  await page.keyboard.press("v");
   await page.mouse.move(canvasBox.x + 500, canvasBox.y + 180);
   const ghost = page.getByTestId("copy-placement-preview");
   await expect(ghost).toBeVisible();
@@ -4192,6 +4213,7 @@ test("R rotates a copy preview before committing the copied component", async ({
   if (!box) throw new Error("Canvas is not measurable");
 
   await page.keyboard.press("c");
+  await page.keyboard.press("v");
   await page.mouse.move(box.x + 560, box.y + 340);
   const previewSymbol = page
     .getByTestId("copy-placement-preview")
@@ -4293,6 +4315,7 @@ test("keeps copy placement active for repeated commits until Escape", async ({
   if (!box) throw new Error("Canvas is not measurable");
 
   await page.keyboard.press("c");
+  await page.keyboard.press("v");
   await page.mouse.move(box.x + 520, box.y + 220);
   await canvas.click({ position: { x: 520, y: 220 } });
   await expect(page.getByTestId("instance-count")).toHaveText("2");
@@ -5643,13 +5666,13 @@ test("docked Properties JSON is the only global configuration surface", async ({
     settings.getByRole("button", {
       name: "Format all Port labels in this Cell",
     }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   await expect(
     page.getByRole("region", { name: "Port label formatting" }),
   ).toHaveCount(0);
   await expect(page.getByTestId("hit-R1")).toBeVisible();
   await expect(settings.getByLabel("Editable Properties code")).toBeVisible();
-  await expect(settings.locator(".cm-netlist-target-select")).toHaveCount(13);
+  await expect(settings.locator(".cm-netlist-target-select")).toHaveCount(12);
   await expect(settings.getByLabel("Font size options")).toBeVisible();
   await expect(
     settings.getByLabel("NMOS bulk Net (usually VSS) options"),
@@ -5658,12 +5681,10 @@ test("docked Properties JSON is the only global configuration surface", async ({
     settings.getByLabel("PMOS bulk Net (usually VDD) options"),
   ).toBeVisible();
   await expect(
-    settings.getByLabel("Port label suffix case options"),
+    settings.getByLabel(
+      "Subscript case in this circuit (label + netlist) options",
+    ),
   ).toBeVisible();
-  await expect(
-    settings.getByLabel("Port label suffix placement options"),
-  ).toBeVisible();
-
   await settings.getByLabel("Font size options").selectOption("1.5");
   await expect(label).toHaveAttribute("font-size", "22.674");
   await expect(page.getByTestId("status")).toContainText(
@@ -5673,10 +5694,7 @@ test("docked Properties JSON is the only global configuration surface", async ({
   const styleSource = await readDocumentStyleCode(page);
   const style = JSON.parse(styleSource);
   expect(style.bulkDefaults).toEqual({ nmosNet: null, pmosNet: null });
-  expect(style.portLabels).toEqual({
-    suffixCase: "preserve",
-    suffixPlacement: "subscript",
-  });
+  expect(style.labels).toEqual({ subscriptCase: "preserve" });
   expect(style.canvas).toEqual({
     showGrid: true,
     annotationGrid: 5,
@@ -6514,6 +6532,7 @@ test("the copy ghost shows the wires it is about to place", async ({
   await page.mouse.up();
 
   await page.keyboard.press("c");
+  await page.keyboard.press("v");
   await canvas.hover({ position: { x: 400, y: 420 } });
   const ghost = page.locator(".copy-placement-preview");
   await expect(ghost).toBeVisible();

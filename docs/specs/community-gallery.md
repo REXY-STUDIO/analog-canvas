@@ -85,8 +85,8 @@ restrictive content-security-policy.
   its renderer, symbol catalogue, and bundled Projects only after the remote
   feed has settled empty or unavailable; a populated Gallery never pays for
   those fallback-only dependencies.
-- The editor Gallery panel offers an on-demand **Check current topology**
-  action above its filters. It compares the currently visible Cell (not
+- The editor Publish dialog offers an on-demand **Check Duplicate**
+  action. It compares the currently visible Cell (not
   unconditionally the Project's root Cell) against every public Gallery
   entry in a Web Worker. Exact topology results ignore instance, Net, Cell and
   external-port names; model and parameter values; top-level port order; and
@@ -94,11 +94,11 @@ restrictive content-security-policy.
   Device classes, recognizable MOS/BJT polarity, terminal roles and actual
   connectivity remain structural evidence. This topology-only contract is
   intentionally broader than the administrator's exact electrical duplicate
-  contract. After exact topology matches, the panel shows at most five nearest
-  structural results ranked by device/pin/external-terminal populations and
-  their electrical neighborhoods. The action is public and read-only: results
-  open the existing Gallery entry, and no cleanup authority is exposed in the
-  editor.
+  contract. Results retain all exact topology matches and at most five partial
+  matches, ranked by verified structural coverage and parameter/model closeness
+  as described in [Current-cell duplicate tasks](#current-cell-duplicate-tasks). The action is public and read-only: results
+  link to the existing Gallery entry and offer read-only snapshot comparison.
+  No cleanup authority is exposed in the editor.
   The click captures the comparison Cell: subsequent edits, hiding the panel,
   or refreshing its feed do not cancel the running scan or erase its results.
   A notice identifies results from an earlier canvas state; checking again
@@ -182,8 +182,32 @@ name, and an update never re-attributes an entry.
 After a successful first publication, the editor associates the live Project
 with the returned entry id. Further edits followed by Publish default to
 `PUT /api/gallery/<id>` for that same item rather than creating duplicates.
-Replacing the active Project clears the association; deliberately choosing
-"Publish as a new entry" replaces it with the newly returned entry id.
+For a saved Shelf draft, this association is persisted as private Cloud Project
+metadata (`gallery_entry_id`) and is restored after reopening, including browser
+recovery. Loading this metadata never replaces private drawing content with the
+public snapshot. A transient lookup failure blocks publication and offers Retry,
+instead of falling back to a new entry. Replacing the active Project clears only
+the editor's old context; the replacement draft restores its own association.
+
+A bound Publish/Update sends `cloudProjectId` and `expectedGalleryEntryId` (null
+before the first link). The Durable Object scopes the draft to the signed-in
+account, rejects a changed link with 409, and commits the publication and source
+association in one transaction. Publication does not Save or rewrite the private
+draft. A first private Save after publishing may establish the link too, provided
+that account has not already assigned another draft to the publication.
+
+For historical drafts without a link, **Use an existing Gallery publication…**
+accepts a Gallery address the user may update. Selecting it previews the update
+target; **Update entry** commits the source change. This keeps the public id,
+byline, likes and bounded version history, retires this account's previous source
+association, and preserves both private drafts. Old tabs with a retired link
+cannot overwrite the publication. No matching by title, Project id or topology
+runs automatically. Source selection requires a saved Shelf draft.
+
+Deliberately choosing **Publish as a new entry** associates the current draft
+with the newly returned id and leaves the earlier public entry intact. Unbound
+Gallery editing remains possible under the existing ownership/moderator rules;
+it does not change another account's private source association.
 
 Every entry records the submitting account: `owner_user_id` plus the
 `submitter_email` and `submitter_provider` read from the session at
@@ -285,14 +309,16 @@ entries, and a confirmed Delete.
 Every content-replacing update (`PUT`, and Restore itself) first
 snapshots the entry's previous state — name, author, description, tags,
 canonical project text, preview — into `gallery_entry_versions`,
-numbered per entry and capped at the newest 2 (older versions are pruned).
-The live current state is separate and does not count toward those 2 snapshots.
+numbered per entry and capped at the newest 3 (older versions are pruned).
+The live current state is separate and does not count toward those 3 snapshots.
 Maintenance re-serialization does not snapshot (content-equivalent).
 Authority: moderators (admin or moderator session) and the entry's
 owning session:
 
 - `GET /api/gallery/<id>/versions` — versions, newest first.
 - `GET /api/gallery/<id>/versions/<versionId>/preview.svg`.
+- `GET /api/gallery/<id>/versions/<versionId>/project` — canonical Project text;
+  same owner/reviewer access, `no-store`, no submitter metadata.
 - `POST /api/gallery/<id>/versions/<versionId>/restore` — snapshots the
   current state, then adopts the version's content and metadata, so
   restores are themselves reversible. A restore keeps the entry's status
@@ -300,7 +326,21 @@ owning session:
 
 The editor surfaces this as "Version history…" inside the publish
 dialog's update mode (moderators and owners) and as a per-entry
-"Version history" action on `/mine`.
+"Version history" action on `/mine`. Compare loads frozen historical and current
+published Projects, shows additions (green), removals (red) and modifications
+(amber), with per-component field changes and a Cell selector. Stable Cell and
+Instance ids own correspondence; delete/recreate is addition/removal. Parameters,
+placement, labels, embedded definitions and logical terminal membership are
+compared; generated Net ids and source provenance are not. Standalone drawings
+and raw source-file changes are outside this component report. A component with
+no placement remains listed but has no highlight on the canvas.
+
+Branch opens a full independent Project, with a fresh Project identity and no
+Cloud/publication binding. In the editor it opens a new project tab; `/mine`
+opens an editor tab using the protected historical Project endpoint. Save creates
+an independent private draft; publishing it is a separate action. There is no
+merge graph, automatic publication, or private Shelf timeline. Expanding the cap
+from 2 to 3 does not recover versions already pruned under the old policy.
 
 ## Accounts and sessions
 
@@ -386,7 +426,7 @@ unreadable, ruleVersion, remaining}`). Every entry stores the rule version
 - `POST /api/gallery/maintenance/schema-restore` — atomically restore the three
   Project-bearing tables from a `schema-backup` payload supplied as
   `{ "backup": ... }`. Current retention is reapplied, so a legacy backup with
-  more than 2 versions for an entry restores only its newest 2. This same-origin
+  more than 3 versions for an entry restores only its newest 3. This same-origin
   endpoint is an emergency rollback operation, not a general import surface.
 
 ## Retention and privacy
@@ -405,3 +445,52 @@ identity is not public:
 
 What a visitor sees is the byline — the account's display name — which
 the account holder controls from the account menu.
+
+
+## Current-cell duplicate tasks
+
+The editor's duplicate scan captures the current Cell when started. Its worker
+and results belong to the page session, independent of the Publish dialog.
+Closing the dialog, editing the canvas or changing browser focus leaves it
+running; a persistent notice exposes progress and completed results. Explicit
+Cancel, a new check, or closing/reloading the browser page ends the old task.
+This is not a server-persisted job and does not claim restart recovery.
+
+Exact topology is confirmed using device classes, polarity, pin roles and
+connectivity. Full netlist equivalence, including models and parameters, is
+checked separately. The public comparison returns a graph witness and device
+occurrence paths; it does not weaken the administrator's exact-duplicate
+cleanup contract.
+
+For partial results, a bounded injective mapping of compatible devices and
+incident nets proves each displayed correspondence. A common net remains
+common and distinct nets cannot collapse. Passive two-pin devices may reverse;
+transistor and external black-box terminal roles may not. Structural score is
+matched-device Dice coverage multiplied by `0.8 + 0.2 × neighborhood score`.
+An exact topology receives structural score 1.
+
+Parameter comparison normalizes SPICE engineering numbers and averages
+`min(abs(a), abs(b)) / max(abs(a), abs(b))` over parameter names present on either
+side, with equal values scoring 1, missing values or different signs scoring 0.
+Symbolic expressions require literal equality. This contributes 80% of the
+parameter/model score, with 20% from matching model and invocation identity.
+Overall score is `structure × (0.85 + 0.15 × parameter/model score)`. Results
+sort by this score; only confirmed full netlist equality displays 100%. Keep
+all exact topology matches and at most five partial matches. A similarity
+percentage is not a simulation-equivalence guarantee.
+
+**Compare on canvas** renders frozen source and candidate Projects side by
+side. Equal colors mark corresponding devices. Selecting a pair opens each
+leaf Cell, focuses its device and lists the original parameters. Complete
+instance paths distinguish repeated child Cell occurrences. Unplaced devices
+have a parameter comparison but no highlight. Subsequent live edits or Gallery
+updates do not replace these snapshots; closing or using keys in this dialog
+cannot edit the live circuit.
+
+Matching is bounded. Budget exhaustion is visible and only verified pairs are
+shown, without claiming maximal coverage. Symmetric circuits may have multiple
+valid correspondences; parameter ordering is a preference, not a guarantee of
+the globally best assignment. Graph extraction's existing limits and
+uncheckable cases remain explicit. The primary algorithm tests live in
+`packages/netlist/src/topology-correspondence.test.ts`; Gallery ranking, task
+lifetime and browser workflows cover their own boundaries.

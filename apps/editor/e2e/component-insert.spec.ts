@@ -70,6 +70,7 @@ test("C copy shows alignment guides, commits the preview and clears guides on Es
     );
   await page.getByTestId("hit-R1").click();
   await page.keyboard.press("c");
+  await page.keyboard.press("v");
   const horizontal = await screenPoint(500, 202);
   await page.mouse.move(horizontal.x, horizontal.y);
   const ghost = page.getByTestId("copy-placement-preview");
@@ -289,6 +290,7 @@ test("mirrors component and copy placement previews before their commits", async
 
   await page.getByTestId("hit-R1").click();
   await page.keyboard.press("c");
+  await page.keyboard.press("v");
   await page.mouse.move(box.x + 520, box.y + 220);
   const copyPreview = page
     .getByTestId("copy-placement-preview")
@@ -427,7 +429,10 @@ test("keeps shortcuts hidden until the status-bar Hints control requests them", 
     "F3Wire options",
     "TAdd text",
     "ODisplay settings",
-    "CCopy and place selection",
+    "CCopy circuit selection",
+    "VPaste circuit selection",
+    "Ctrl/CmdCCopy circuit selection across tabs",
+    "Ctrl/CmdVPaste circuit selection",
     "MMove selection",
     "ShiftMMove without wires",
     "RRotate selection / next object",
@@ -1057,10 +1062,9 @@ test("places the VDD power-port device as the default VDD entry", async ({
   const powerLabels = canvas.locator('[data-kind="power-label"]');
   await expect(powerLabels).toHaveCount(2);
   await expect(powerLabels).toHaveText(["VDD", "VDD"]);
-  await expect(powerLabels.locator('[data-text-run="subscript"]')).toHaveText([
-    "DD",
-    "DD",
-  ]);
+  await expect(powerLabels.locator('[data-text-run="subscript"]')).toHaveCount(
+    0,
+  );
   await expect(page.getByTestId("instance-count")).toHaveText("2");
 
   const saved = parseSavedProject(
@@ -1183,7 +1187,7 @@ test("renames one supply marker without changing its same-name peer", async ({
     canvas
       .locator('[data-object-id="power-label-vdd2"]')
       .locator('[data-text-run="subscript"]'),
-  ).toHaveText("DD");
+  ).toHaveCount(0);
 });
 
 test("reopens I and starts Copy from retained selection without stacking modes", async ({
@@ -1207,7 +1211,9 @@ test("reopens I and starts Copy from retained selection without stacking modes",
     page.getByRole("dialog", { name: "Insert Component" }),
   ).toHaveCount(0);
   await page.keyboard.press("c");
+  await page.keyboard.press("v");
   await page.keyboard.press("c");
+  await page.keyboard.press("v");
   await canvas.hover({ position: { x: 560, y: 330 } });
   await expect(page.getByTestId("copy-placement-preview")).toBeVisible();
   await page.keyboard.press("Escape");
@@ -1261,6 +1267,7 @@ test("Copy shows its ghost under the cursor without waiting for a move", async (
   // from the remembered position rather than from the next pointer move.
   await canvas.hover({ position: { x: 500, y: 300 } });
   await page.keyboard.press("c");
+  await page.keyboard.press("v");
   await expect(page.getByTestId("copy-placement-preview")).toBeVisible();
 });
 
@@ -1293,6 +1300,9 @@ test("publishes placement cancellation synchronously before rapid Copy", async (
       document.body.dispatchEvent(
         new KeyboardEvent("keydown", { key: "c", bubbles: true }),
       );
+      document.body.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "v", bubbles: true }),
+      );
     });
 
     await canvas.hover({ position: { x: 400 + index * 130, y: 380 } });
@@ -1317,6 +1327,7 @@ test("copies a MOS whose bulk belongs to a shared supply Net", async ({
 
   await page.getByTestId("hit-M1").click();
   await page.keyboard.press("c");
+  await page.keyboard.press("v");
   await canvas.hover({ position: { x: 620, y: 340 } });
   await expect(page.getByTestId("copy-placement-preview")).toBeVisible();
   await canvas.click({ position: { x: 620, y: 340 } });

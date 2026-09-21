@@ -1,3 +1,9 @@
+import { applyLabelSubscriptCase } from "../features/text-editing/label-subscript-case";
+import { resolveAnnotationName } from "@icm/derived";
+import {
+  branchGalleryVersion,
+  loadGalleryVersionProject,
+} from "../components/gallery-version-project";
 import { InstanceCodePanel } from "../features/properties/instance-code-panel";
 import { NetlistCodePanel } from "../features/netlist-export/netlist-code-panel";
 import { NetlistProfileCode } from "../features/netlist-export/netlist-profile-code";
@@ -76,14 +82,9 @@ import {
   resolveDocumentStyleProfile,
   summarizeProjectCells,
   resolveRouteAttachment,
-  resolveAnnotationText,
 } from "@icm/derived";
 import type { HierarchyFrame } from "@icm/derived";
-import {
-  createEmptyProject,
-  DEFAULT_PORT_LABEL_FORMAT,
-  flattenRichText,
-} from "@icm/model";
+import { createEmptyProject, createId } from "@icm/model";
 import {
   resolveReviewedExternalBinding,
   reviewedExternalModelSuggestions,
@@ -95,7 +96,6 @@ import type {
   GridRect,
   LayoutGroup,
   Point,
-  PortLabelFormatOptions,
   Rect,
   Rotation,
   SchematicDocument,
@@ -105,7 +105,12 @@ import { renderCrashRequested, sceneCrashRequested } from "./crash-test-hooks";
 import { buildSceneSafely } from "./scene-safety";
 import { externalSubcircuitSymbolId, hierarchicalSymbolId } from "@icm/symbols";
 import { clipboardPreviewDocument } from "../features/clipboard/clipboard";
-import { prepareProjectCopy } from "../features/clipboard/project-copy";
+import {
+  prepareProjectCopy,
+  applyProjectCopyPlacement,
+} from "../features/clipboard/project-copy";
+import { clipboardPlacementAnchor } from "../features/clipboard/clipboard";
+import { useCircuitClipboard } from "../features/clipboard/use-circuit-clipboard";
 import {
   copyPlacementAnchors,
   snapPendingCopyPlacement,
@@ -233,7 +238,10 @@ import {
   ShapesPanel,
 } from "../features/editor-shell/shapes-panel";
 import { ExamplesPanel } from "../features/editor-shell/examples-panel";
-import { createGalleryExampleCommands } from "../features/editor-shell/gallery-example-commands";
+import {
+  type GalleryEntryContext,
+  createGalleryExampleCommands,
+} from "../features/editor-shell/gallery-example-commands";
 import { createEditorNavigationController } from "../features/hierarchy/editor-navigation-controller";
 import { createProjectStructureCommands } from "../features/hierarchy/project-structure-commands";
 import { loadCloudProjectForCellImport } from "../features/hierarchy/cloud-cell-import";
@@ -241,6 +249,8 @@ import type { PublishGalleryDraft } from "../features/editor-shell/publish-galle
 import {
   publishProjectToGallery,
   updateGalleryEntry,
+  canUpdateGalleryPublication,
+  loadGalleryPublicationContext,
 } from "../features/editor-shell/gallery-publish";
 import {
   announceGalleryChange,
@@ -248,6 +258,7 @@ import {
   subscribeGalleryRefresh,
 } from "../gallery-client";
 import { projectWithTopologyRoot } from "../features/editor-shell/gallery-topology-project";
+import { GalleryTopologyTaskNotice } from "../features/editor-shell/gallery-topology-task-notice";
 import { fetchSessionUser, type SessionUser } from "../components/account";
 import {
   evaluateSubmissionGates,
@@ -257,8 +268,14 @@ import {
   createLibraryExampleProject,
   libraryProjectExamples,
 } from "../examples/library-examples";
-import { useDocumentController } from "../document/document-controller";
+import {
+  EditorDocumentController,
+  useDocumentController,
+} from "../document/document-controller";
 import { useProjectFileLifecycle } from "../document/use-project-file-lifecycle";
+import { useProjectTabs } from "../document/use-project-tabs";
+import { ProjectTabs } from "../features/editor-shell/project-tabs";
+import type { ReplaceProjectOptions } from "../document/use-project-file-lifecycle";
 import { useUnsavedWorkGuard } from "../document/use-unsaved-work-guard";
 import { authoredObjectCount } from "../document/project-content";
 import { translateDraftingObject } from "../features/drafting/drafting-manipulation";
@@ -419,7 +436,6 @@ function defaultPropertiesWidth(viewportWidth: number): number {
   );
 }
 const COMPACT_LAYOUT_MEDIA_QUERY = "(max-width: 860px)";
-const PORT_LABEL_FORMAT_STORAGE_KEY = "icm.port-label-format.v1";
 const DRAG_START_DISTANCE_PX = 4;
 const SNAP_CAPTURE_RADIUS_PX = 4;
 const NET_LABEL_SNAP_CAPTURE_RADIUS_PX = 12;
@@ -572,6 +588,8 @@ export function App({
   // offers the refresh that restores the current circuit.
   const [chunkLoadFailure, setChunkLoadFailure] = useState<string | null>(null);
   const {
+    captureWorkingSession: captureRecoverySession,
+    resumeWorkingSession: resumeRecoverySession,
     state: recoveryState,
     sessions: recoverySessions,
     ready: recoveryReady,
@@ -592,6 +610,7 @@ export function App({
       initialGalleryEntryId !== null ||
       search.has("example") ||
       search.has("project") ||
+      search.has("history") ||
       search.get("new") === "1"
     )
       return null;
@@ -609,6 +628,7 @@ export function App({
     commitProjectStructure,
     dispatchProjectTransaction,
     transact: transactDocument,
+    activateSession: activateDocumentSession,
     controller: editorDocumentController,
     projectSessionId,
     synchronizeExternalCommit,
@@ -725,37 +745,6 @@ export function App({
       // Storage may be unavailable; the choice still applies to this session.
     }
   };
-  const [portLabelFormat, setPortLabelFormatState] =
-    useState<PortLabelFormatOptions>(() => {
-      if (typeof window === "undefined") return DEFAULT_PORT_LABEL_FORMAT;
-      try {
-        const stored = JSON.parse(
-          window.localStorage.getItem(PORT_LABEL_FORMAT_STORAGE_KEY) ?? "null",
-        ) as Partial<PortLabelFormatOptions> | null;
-        if (
-          stored &&
-          ["preserve", "uppercase", "lowercase"].includes(
-            stored.suffixCase ?? "",
-          ) &&
-          ["subscript", "baseline"].includes(stored.suffixPlacement ?? "")
-        )
-          return stored as PortLabelFormatOptions;
-      } catch {
-        // Invalid or unavailable storage falls back to the canonical defaults.
-      }
-      return DEFAULT_PORT_LABEL_FORMAT;
-    });
-  const setPortLabelFormat = (format: PortLabelFormatOptions): void => {
-    setPortLabelFormatState(format);
-    try {
-      window.localStorage.setItem(
-        PORT_LABEL_FORMAT_STORAGE_KEY,
-        JSON.stringify(format),
-      );
-    } catch {
-      // The Properties code remains authoritative for this session.
-    }
-  };
   const arrowPreset: ArrowPreset = DEFAULT_ARROW_PRESET;
   const [drawAngleMode, setDrawAngleModeState] = useState<DrawAngleMode>(() => {
     if (typeof window === "undefined") return "free";
@@ -863,17 +852,16 @@ export function App({
     if (mutationAtStart !== cloudListMutationRef.current) return;
     setCloudProjects(outcome.projects);
   }, []);
-  const [galleryEntryContext, setGalleryEntryContext] = useState<{
-    id: string;
-    name: string;
-    /** The opened Project's id: the context is only valid while that
-     * exact Project is still the active one. */
-    projectId: string;
-    ownerUserId: string | null;
-    author: string;
-    description: string;
-    tags: readonly string[];
-  } | null>(null);
+  const [galleryEntryContext, setGalleryEntryContext] =
+    useState<GalleryEntryContext | null>(null);
+  const [publicationLinkLoading, setPublicationLinkLoading] = useState(false);
+  const [publicationLinkError, setPublicationLinkError] = useState<
+    string | null
+  >(null);
+  const [publicationLinkNotice, setPublicationLinkNotice] = useState<
+    string | null
+  >(null);
+  const [publicationLinkRetry, setPublicationLinkRetry] = useState(0);
   // The moment any OTHER Project replaces the opened gallery entry (new
   // circuit, bundled example, import, …), the update offer must vanish —
   // otherwise a later publish silently overwrites the stale entry.
@@ -1053,6 +1041,17 @@ export function App({
     void humanSimulationSession?.clear();
     setAnalogSimulationState("closed");
   };
+  const [codeDraftDirty, setCodeDraftDirty] = useState(false);
+  const noteCodeDraftDirty = useCallback((dirty: boolean) => {
+    setCodeDraftDirty(dirty);
+  }, []);
+  const openProjectInTabRef = useRef<
+    (
+      project: CircuitProject,
+      view: GridRect,
+      options: ReplaceProjectOptions,
+    ) => Promise<boolean>
+  >(async () => false);
   const captureAuthoredProject = async () => {
     if (
       simulationSourceBuffer.current &&
@@ -1066,7 +1065,10 @@ export function App({
     return editorDocumentController.project;
   };
   const {
+    captureFileSession,
+    restoreFileSession,
     cloudBinding,
+    noteGalleryPublication,
     savedProjectBaseline,
     replaceGuard,
     replaceGuardSaving,
@@ -1100,7 +1102,15 @@ export function App({
     openProjectFile,
     openCloudProjectById,
   } = useProjectFileLifecycle({
+    openProjectInTab: (project, view, options) =>
+      openProjectInTabRef.current(project, view, options),
     restoreWorkingSession: agentStartupRecovery !== null,
+    galleryEntryId: canUpdateGalleryPublication(
+      galleryEntryContext,
+      publishSession,
+    )
+      ? galleryEntryContext!.id
+      : undefined,
     hasPendingEdits: () => simulationSourceBuffer.current?.dirty === true,
     beforeSnapshot: captureAuthoredProject,
     onRecoverBuffers: recoverSourceDrafts,
@@ -1111,6 +1121,11 @@ export function App({
     setStatus,
     projectStoreCopy: projectStore,
     onCloudProjectSaved: (saved) => {
+      if (
+        galleryEntryContext &&
+        saved.galleryEntryId !== galleryEntryContext.id
+      )
+        setGalleryEntryContext(null);
       cloudListMutationRef.current += 1;
       setCloudProjects((current) => [
         saved,
@@ -1150,7 +1165,77 @@ export function App({
       return nextDocument;
     },
   });
-  const allowNextBrowserUnload = useUnsavedWorkGuard(hasUnsafeWork());
+  useEffect(() => {
+    let cancelled = false;
+    setPublicationLinkError(null);
+    setPublicationLinkNotice(null);
+    if (!cloudBinding || galleryEntryContext) {
+      setPublicationLinkLoading(false);
+      return;
+    }
+    setPublicationLinkLoading(true);
+    void (async () => {
+      try {
+        // Read current metadata even for recovery: another tab may have changed the source.
+        const listed = await listCloudProjects();
+        const saved =
+          listed.status === "listed"
+            ? listed.projects.find((item) => item.id === cloudBinding.id)
+            : null;
+        if (!saved)
+          throw new Error(
+            "Could not load the saved Project’s publication link. Retry before publishing.",
+          );
+        const entryId = saved.galleryEntryId ?? null;
+        const context = entryId
+          ? await loadGalleryPublicationContext(entryId, project.id)
+          : null;
+        if (cancelled) return;
+        noteGalleryPublication(entryId);
+        if (context) {
+          setGalleryEntryContext(context);
+        } else if (entryId) {
+          setPublicationLinkNotice(
+            "The original Gallery entry is unavailable. Publishing creates a new entry; the Shelf draft is preserved.",
+          );
+        }
+      } catch (error) {
+        if (!cancelled)
+          setPublicationLinkError(
+            error instanceof Error
+              ? error.message
+              : "Could not load the publication link.",
+          );
+      } finally {
+        if (!cancelled) setPublicationLinkLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    cloudBinding?.id,
+    projectSessionId,
+    galleryEntryContext,
+    publicationLinkRetry,
+  ]);
+
+  const linkExistingPublication = async (input: string): Promise<void> => {
+    const match = input
+      .trim()
+      .match(/^(?:https?:\/\/[^/]+)?\/g\/([^/?#]+)(?:[?#].*)?$/u);
+    const id = match?.[1] ?? input.trim();
+    if (!/^[a-zA-Z0-9-]+$/u.test(id))
+      throw new Error("Paste a Gallery link or entry id.");
+    const sessionId = editorDocumentController.projectSessionId;
+    const context = await loadGalleryPublicationContext(id, project.id);
+    if (!context || !canUpdateGalleryPublication(context, publishSession))
+      throw new Error("Choose a Gallery entry you own or may edit.");
+    if (sessionId !== editorDocumentController.projectSessionId)
+      throw new Error("The active Project changed. Reopen Publish.");
+    setGalleryEntryContext(context);
+  };
+
   const startupCloudRestoreAttemptedRef = useRef(false);
   const hasExplicitBootTarget =
     initialGalleryEntryId !== null ||
@@ -1160,6 +1245,7 @@ export function App({
         return (
           search.has("example") ||
           search.has("project") ||
+          search.has("history") ||
           search.get("new") === "1"
         );
       })());
@@ -1333,7 +1419,6 @@ export function App({
     setCellSymbolBodySize,
     setCellSymbolPortPlacement,
     editCellTerminalAnnotation,
-    formatCellTerminalAnnotations,
     removeCellTerminalSelection,
     renameProject,
   } = createProjectStructureCommands({
@@ -1382,11 +1467,11 @@ export function App({
   /**
    * A verb key pressed with nothing selected arms that verb: the next
    * object pointed at is the one acted on (Cadence-style verb-first).
-   * Rotate and Delete stay armed for repeated clicks; Copy and Move hand
-   * over to their own placement/move interactions on the first target.
+   * Rotate and Delete stay armed for repeated clicks; Move hands
+   * over to its own move interaction on the first target.
    */
   const [armedVerb, setArmedVerb] = useState<
-    "rotate" | "copy" | "move" | "move-detached" | "delete" | null
+    "rotate" | "move" | "move-detached" | "delete" | null
   >(null);
   /** The click paired with an armed-verb pickup must not commit a placement. */
   const suppressCommitClickRef = useRef(false);
@@ -1492,6 +1577,7 @@ export function App({
   }
   const suppressInstanceClick = useRef(false);
   const projectInputRef = useRef<HTMLInputElement>(null);
+  const tabProjectInputRef = useRef<HTMLInputElement>(null);
   const selectionShelfRef = useRef<HTMLButtonElement>(null);
   const documentViewBoxes = useRef(new Map<string, GridRect>());
   const [projectedMovePreviewDocument, setProjectedMovePreviewDocument] =
@@ -2324,9 +2410,7 @@ export function App({
     : undefined;
   const selectedDisplayName =
     selectedInstanceLabel?.kind === "instance-label"
-      ? flattenRichText(
-          resolveAnnotationText(document, selectedInstanceLabel),
-        ).trim() || null
+      ? resolveAnnotationName(document, selectedInstanceLabel).trim() || null
       : null;
   const selectedInstanceValue = selectedInstance
     ? instanceValueAnnotation(document, selectedInstance.id)
@@ -2628,20 +2712,16 @@ export function App({
   });
 
   /** Arm a verb so the next object pointed at is the one acted on. */
-  function armVerb(
-    verb: "rotate" | "copy" | "move" | "move-detached" | "delete",
-  ): void {
+  function armVerb(verb: "rotate" | "move" | "move-detached" | "delete"): void {
     setArmedVerb(verb);
     setStatus(
       verb === "rotate"
         ? "Rotate: click a part to turn it, Escape to stop"
-        : verb === "copy"
-          ? "Copy: click a part to pick up a copy · Esc cancels"
-          : verb === "move"
-            ? "Move: click a part to pick it up · Esc cancels"
-            : verb === "move-detached"
-              ? "Move without wires: click a part to pick it up · Esc cancels"
-              : "Delete: click objects to delete them · Esc exits",
+        : verb === "move"
+          ? "Move: click a part to pick it up · Esc cancels"
+          : verb === "move-detached"
+            ? "Move without wires: click a part to pick it up · Esc cancels"
+            : "Delete: click objects to delete them · Esc exits",
     );
   }
 
@@ -2652,9 +2732,9 @@ export function App({
 
   /**
    * Apply the armed verb to one part. Returns false when nothing was armed.
-   * Rotate and Delete remain armed for the next click; Copy and Move disarm
-   * because their own interactions (copy placement, command move) take over
-   * and own Esc from here.
+   * Rotate and Delete remain armed for the next click; Move disarms
+   * because its command move interaction takes over
+   * and owns Esc from here.
    */
   function consumeArmedVerbOnInstance(instanceId: string): boolean {
     if (armedVerb === null) return false;
@@ -2676,13 +2756,6 @@ export function App({
           `Rotated ${instanceId} to ${next}° — click another, Escape to stop`,
         );
       }
-      return true;
-    }
-    if (armedVerb === "copy") {
-      setArmedVerb(null);
-      selectOnly("instance", [instanceId]);
-      suppressCommitClickRef.current = true;
-      beginCopyPlacementFromSelection([instanceId]);
       return true;
     }
     if (armedVerb === "move" || armedVerb === "move-detached") {
@@ -2728,7 +2801,6 @@ export function App({
       setStatus,
     });
   const {
-    beginCopyPlacement: beginCopyPlacementFromSelection,
     beginKeyboardSelectionMove: beginKeyboardSelectionMoveFromSelection,
     beginMove: beginMoveFromSelection,
     beginVisualSelectionMove: beginVisualSelectionMoveFromSelection,
@@ -2759,12 +2831,9 @@ export function App({
     selectedEndpointNetId,
     getInteractionState: getCurrentInteractionState,
     transact,
-    transactCopy: (edits) => {
-      const committed = commitStructure("copy-placement", [...edits]);
-      return {
-        ok: committed,
-        revision: committed ? document.revision + 1 : document.revision,
-      };
+    transactCopy: (plan) => {
+      const committed = commitProjectStructure(applyProjectCopyPlacement(plan));
+      return { ok: true, revision: committed.revision };
     },
     commitCellTerminalSelection: removeCellTerminalSelection,
     setStatus,
@@ -3430,6 +3499,33 @@ export function App({
     showProjectPanel(mode);
   }
 
+  const circuitClipboard = useCircuitClipboard({
+    project,
+    document,
+    selection: visualSelection,
+    enabled:
+      !componentEditor &&
+      !userComponentsOpen &&
+      !interfaceConfirmation &&
+      !versionHistoryOpen,
+    setStatus,
+    beginPaste: (clipboard) => {
+      if (getCurrentInteractionState().kind !== "idle") {
+        setStatus("Finish or cancel the active tool before pasting");
+        return;
+      }
+      prepareProjectCopy(project, document, clipboard);
+      const anchor = clipboardPlacementAnchor(clipboard);
+      if (!anchor) throw new Error("Copied objects have no placeable origin");
+      cancelAllTransientInteraction();
+      beginCopyPlacementInteraction(clipboard, anchor);
+      seedCopyPreviewFromPointer();
+      setStatus(
+        `Paste ${clipboard.instances.length} components · click to place · Esc cancels`,
+      );
+    },
+  });
+
   function selectAllObjects(): void {
     replaceSelection(selectionPolicy.selectAll());
     setSelectedEndpoint(null);
@@ -3490,6 +3586,29 @@ export function App({
       new URLSearchParams(window.location.search).get("new") === "1";
     if (initialGalleryEntryId) {
       void openGalleryEntryById(initialGalleryEntryId, false);
+      return;
+    }
+    const historySearch = new URLSearchParams(window.location.search);
+    const historyEntryId = historySearch.get("history");
+    if (historyEntryId) {
+      const versionId = historySearch.get("version");
+      const versionNo = Number(historySearch.get("versionNo"));
+      if (!versionId || !Number.isInteger(versionNo) || versionNo < 1) {
+        setStatus("Invalid historical branch link");
+        return;
+      }
+      setStatus("Opening historical version as a new branch…");
+      void loadGalleryVersionProject(historyEntryId, versionId)
+        .then(async (snapshot) => {
+          await openProjectInTabRef.current(
+            branchGalleryVersion(snapshot, versionNo),
+            DEFAULT_VIEWBOX,
+            { source: "opened-file", persistenceState: "dirty" },
+          );
+        })
+        .catch((error: unknown) =>
+          setStatus(error instanceof Error ? error.message : String(error)),
+        );
       return;
     }
     if (requestsNewProject) {
@@ -4013,11 +4132,7 @@ export function App({
         armVerb("delete");
       },
       beginCopy: () => {
-        if (hasVisualSelection(visualSelection)) {
-          beginCopyPlacementFromSelection();
-          return;
-        }
-        armVerb("copy");
+        void circuitClipboard.copySelection();
       },
       copyVisualSelection: visualClipboard.copy,
       openSelectionFilter: () => {
@@ -4151,6 +4266,14 @@ export function App({
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
+      if (versionHistoryOpen) return;
+      if (
+        event.target instanceof Element &&
+        (event.target.closest(".gallery-topology-comparison") ||
+          (event.target.closest(".project-tabs") &&
+            ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)))
+      )
+        return;
       if (componentEditor) return;
       if (userComponentsOpen) {
         if (event.key === "Escape") setUserComponentsOpen(false);
@@ -4293,6 +4416,9 @@ export function App({
           return;
         case "block-browser-bookmark":
           setStatus("Browser bookmark shortcut blocked while editing");
+          return;
+        case "paste-selection":
+          void circuitClipboard.pasteSelection();
           return;
         case "save":
           void saveProjectToCloud();
@@ -4679,6 +4805,156 @@ export function App({
     },
   });
 
+  function captureTabSession() {
+    return {
+      controller: editorDocumentController,
+      file: captureFileSession(),
+      recovery: captureRecoverySession(),
+      view: cameraRuntime.current(),
+      cellViews: new Map(documentViewBoxes.current),
+      stack: documentStack,
+      selection: visualSelection,
+      panel: projectPanel,
+      properties: selectionOpen,
+      publication: galleryEntryContext,
+      publishDraft,
+      netlistEntry,
+      dirty: isDirtyWork(),
+      unsafe: hasUnsafeWork() || codeDraftDirty,
+      fit: false,
+    };
+  }
+  type TabSession = ReturnType<typeof captureTabSession>;
+  function restoreTabSession(session: TabSession) {
+    resetInteractionState();
+    browserAgentFileHost.clear();
+    setAgentFileCandidate(null);
+    setImportReport(null);
+    setImportReviewOpen(false);
+    setProjectNameDraft(null);
+    setCanvasContextMenu(null);
+    setNetlistFocusedInstance(null);
+    setHighlightedNetOrigin(null);
+    setCodeNetPreview(null);
+    setAnalogSimulationState("closed");
+    setNetlistPreflightOpen(false);
+    activateDocumentSession(session.controller);
+    restoreFileSession(session.file);
+    resumeRecoverySession(session.recovery);
+    documentViewBoxes.current = new Map(session.cellViews);
+    setDocumentStack(session.stack);
+    setViewBox(session.view, session.controller.document.presentation.grid);
+    autoFitProjectRef.current = session.controller.projectSessionId;
+    pendingAutoFitRef.current = session.fit;
+    replaceSelection(session.selection);
+    setSelectionOpen(session.properties);
+    setProjectPanel(session.panel);
+    setGalleryEntryContext(session.publication);
+    setPublishDraft(session.publishDraft);
+    setNetlistEntry(session.netlistEntry);
+    setStatus(`Switched to ${session.controller.project.name}`);
+    stageRecovery(session.controller.project, {
+      cloudBinding: session.file.cloudBinding,
+      unsavedAtSnapshot: session.dirty,
+    });
+  }
+  function createTabSession(
+    nextProject = createEmptyProject(
+      createId("project"),
+      "New Circuit",
+      createId("document"),
+    ),
+    nextView = DEFAULT_VIEWBOX,
+    options: ReplaceProjectOptions = {},
+  ): TabSession {
+    const prepared =
+      materializeRazaviProjectBulkConnections(nextProject).project;
+    const controller = new EditorDocumentController(prepared);
+    // Identity is allocated without changing the outgoing recovery coordinator.
+    return {
+      ...captureTabSession(),
+      controller,
+      file: {
+        persistenceState: options.persistenceState ?? "unbound",
+        cloudBinding: options.cloudBinding ?? null,
+        savedBaseline: options.savedBaseline ?? null,
+        safeSnapshotToken: null,
+      },
+      recovery: {
+        workingCopyId: createId("working-copy"),
+        source: options.source ?? "new",
+        ...(options.formalFileHint
+          ? { formalFileHint: options.formalFileHint }
+          : {}),
+      },
+      view: nextView,
+      cellViews: new Map(),
+      stack: [],
+      selection: {
+        instanceIds: [],
+        routeIds: [],
+        annotationIds: [],
+        draftingIds: [],
+        junctionIds: [],
+      },
+      panel: "netlist",
+      properties: false,
+      publication: null,
+      publishDraft: null,
+      netlistEntry: null,
+      dirty: options.persistenceState === "dirty",
+      unsafe: options.persistenceState === "dirty",
+      fit: true,
+    };
+  }
+  const projectTabs = useProjectTabs<TabSession>({
+    capture: captureTabSession,
+    restore: restoreTabSession,
+    describe: (session) => ({
+      name: session.controller.project.name,
+      dirty: session.dirty,
+      unsafe: session.unsafe,
+      cloudId: session.file.cloudBinding?.id ?? null,
+    }),
+    prepare: async () => {
+      if (
+        isSaveInFlight() ||
+        replaceGuard ||
+        recoveryDialogOpen ||
+        publishGalleryOpen ||
+        componentEditor ||
+        documentSettingsOpen ||
+        versionHistoryOpen ||
+        projectNameDraft !== null ||
+        textEditing ||
+        codeDraftDirty
+      ) {
+        setStatus(
+          "Finish or cancel the current edit or dialog before switching project tabs. No work was discarded.",
+        );
+        return false;
+      }
+      if (!["idle", "revoked", "expired"].includes(agentSession.status))
+        await agentSession.revoke();
+      const snapshot = await captureAuthoredProject();
+      if (!snapshot) return false;
+      cancelAllTransientInteraction();
+      stageRecovery(snapshot, {
+        cloudBinding,
+        unsavedAtSnapshot: isDirtyWork(),
+      });
+      await flushRecovery();
+      return true;
+    },
+    onError: (message) => setStatus(message),
+  });
+  openProjectInTabRef.current = (next, view, options) =>
+    projectTabs.open(
+      () => createTabSession(next, view, options),
+      options.cloudBinding?.id,
+    );
+  const allowNextBrowserUnload = useUnsavedWorkGuard(projectTabs.hasUnsafeTabs);
+
   const openAgentConnection = () => {
     setAgentPanelOpen(true);
     if (
@@ -4695,6 +4971,10 @@ export function App({
 
   return (
     <main className="app-shell">
+      <GalleryTopologyTaskNotice
+        hidden={publishGalleryOpen}
+        onOpen={() => setPublishGalleryOpen(true)}
+      />
       {parameterBinding &&
       selectionOpen &&
       selectedInstance?.id === parameterBinding.instanceId &&
@@ -4770,6 +5050,44 @@ export function App({
       ) : null}
       {renderCrashRequested() ? <RenderCrashProbe /> : null}
       <EditorAppChrome
+        projectTabs={
+          <>
+            <ProjectTabs
+              tabs={projectTabs.tabs}
+              activeId={projectTabs.activeId}
+              busy={projectTabs.busy}
+              onSelect={(id) => {
+                void projectTabs.select(id);
+              }}
+              onClose={(id) => {
+                void projectTabs.close(id, () => createTabSession());
+              }}
+              onNew={() => {
+                void projectTabs.open(() => createTabSession());
+              }}
+              onOpenFile={() => tabProjectInputRef.current?.click()}
+              cloudProjects={cloudProjects}
+              onRefreshShelf={() => {
+                void reloadCloudProjects();
+              }}
+              onOpenShelf={(id) => {
+                void openCloudProjectById(id, true);
+              }}
+            />
+            <input
+              ref={tabProjectInputRef}
+              hidden
+              type="file"
+              accept=".json,.icproj.json"
+              data-testid="tab-project-file"
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                event.currentTarget.value = "";
+                if (file) void openProjectFile(file, { inTab: true });
+              }}
+            />
+          </>
+        }
         {...(publicSimulationUiEnabled
           ? { simulationAction: openAnalogSimulation }
           : {})}
@@ -5304,25 +5622,31 @@ export function App({
                 session: publishSession,
                 gateReport: publishGates,
                 topologyProject: galleryTopologyProject,
-                updateTarget:
-                  galleryEntryContext &&
-                  publishSession &&
-                  (publishSession.isAdmin ||
-                    publishSession.role === "moderator" ||
-                    (galleryEntryContext.ownerUserId !== null &&
-                      publishSession.id === galleryEntryContext.ownerUserId))
-                    ? {
-                        id: galleryEntryContext.id,
-                        name: galleryEntryContext.name,
-                      }
-                    : null,
+                publicationLinkLoading,
+                publicationLinkError,
+                publicationLinkNotice,
+                onRetryPublicationLink: () =>
+                  setPublicationLinkRetry((value) => value + 1),
+                ...(cloudBinding
+                  ? { onLinkExisting: linkExistingPublication }
+                  : {}),
+                updateTarget: canUpdateGalleryPublication(
+                  galleryEntryContext,
+                  publishSession,
+                )
+                  ? {
+                      id: galleryEntryContext!.id,
+                      name: galleryEntryContext!.name,
+                    }
+                  : null,
                 updateDefaults: galleryEntryContext
                   ? {
                       description: galleryEntryContext.description,
                       tags: galleryEntryContext.tags,
                     }
                   : null,
-                publish: (fields) => publishProjectToGallery(project, fields),
+                publish: (fields) =>
+                  publishProjectToGallery(project, fields, fetch, cloudBinding),
                 ...(galleryEntryContext
                   ? {
                       publishUpdate: (fields) =>
@@ -5330,6 +5654,8 @@ export function App({
                           galleryEntryContext.id,
                           project,
                           fields,
+                          fetch,
+                          cloudBinding,
                         ),
                     }
                   : {}),
@@ -5341,9 +5667,17 @@ export function App({
                   updated,
                   previewRevision,
                 }) => {
+                  if (
+                    editorDocumentController.projectSessionId !==
+                    projectSessionId
+                  ) {
+                    announceGalleryChange({ entryId: id });
+                    return;
+                  }
                   // The gallery now holds these exact bytes: leaving or
                   // refreshing loses nothing until the next edit.
                   noteProjectSnapshotSafe();
+                  noteGalleryPublication(id);
                   // Publishing establishes the same update-in-place binding
                   // as opening an existing Gallery entry. Keep it attached to
                   // this Project only; replacing the Project clears it above.
@@ -5398,6 +5732,18 @@ export function App({
             ? {
                 entryId: galleryEntryContext.id,
                 entryName: galleryEntryContext.name,
+                onBranch: async (snapshot) => {
+                  setVersionHistoryOpen(false);
+                  // Let the dialog close before the normal tab-switch guard runs.
+                  await new Promise<void>((resolve) =>
+                    requestAnimationFrame(() => resolve()),
+                  );
+                  return openProjectInTabRef.current(
+                    snapshot,
+                    DEFAULT_VIEWBOX,
+                    { source: "opened-file", persistenceState: "dirty" },
+                  );
+                },
                 onRestored: ({ previewRevision }) => {
                   void primeGalleryPreview(
                     galleryEntryContext.id,
@@ -5789,6 +6135,7 @@ export function App({
                   />
                 ) : projectPanel === "netlist" ? (
                   <NetlistCodePanel
+                    onDirtyChange={noteCodeDraftDirty}
                     key={projectSessionId}
                     onApply={(edits) =>
                       commitStructure("edit-netlist-code", edits)
@@ -5821,6 +6168,7 @@ export function App({
                   />
                 ) : projectPanel === "instances" ? (
                   <InstanceCodePanel
+                    onDirtyChange={noteCodeDraftDirty}
                     key={projectSessionId}
                     project={project}
                     onApply={(edits) => {
@@ -5837,6 +6185,8 @@ export function App({
                   />
                 ) : (
                   <ProjectCodePanel
+                    key={projectSessionId}
+                    onDirtyChange={noteCodeDraftDirty}
                     project={project}
                     onApply={(source, baseline) => {
                       if (formatProjectCode(project) !== baseline) {
@@ -5923,24 +6273,13 @@ export function App({
                         drawAngle: drawAngleMode,
                         scrollBehavior: wheelBehavior,
                       },
-                      portLabels: portLabelFormat,
-                      portLabelCount: document.annotations.filter(
-                        (annotation) =>
-                          annotation.binding?.kind === "cell-terminal-name",
-                      ).length,
-                      onFormatPortLabels: (options) =>
-                        formatCellTerminalAnnotations(document.id, options),
                       onApply: (value) => {
-                        const current = documentSettingsCodeValue(
-                          document,
-                          {
-                            showGrid: gridDotsVisible,
-                            annotationGrid,
-                            drawAngle: drawAngleMode,
-                            scrollBehavior: wheelBehavior,
-                          },
-                          portLabelFormat,
-                        );
+                        const current = documentSettingsCodeValue(document, {
+                          showGrid: gridDotsVisible,
+                          annotationGrid,
+                          drawAngle: drawAngleMode,
+                          scrollBehavior: wheelBehavior,
+                        });
                         const edits: SchematicEdit[] = [];
                         if (
                           JSON.stringify(value.appearance) !==
@@ -5977,7 +6316,30 @@ export function App({
                               value.bulkDefaults.pmosNet,
                             ),
                           );
-                        if (edits.length > 0 && !transact(edits).ok) {
+                        if (
+                          value.labels.subscriptCase !==
+                          current.labels.subscriptCase
+                        ) {
+                          try {
+                            commitProjectStructure(
+                              applyLabelSubscriptCase(
+                                project,
+                                document.id,
+                                value.labels.subscriptCase,
+                                resolver,
+                                edits,
+                              ),
+                              document.id,
+                            );
+                          } catch (error) {
+                            const message =
+                              error instanceof Error
+                                ? error.message
+                                : "Could not rename labels";
+                            setStatus(message);
+                            return { ok: false as const, message };
+                          }
+                        } else if (edits.length > 0 && !transact(edits).ok) {
                           return {
                             ok: false as const,
                             message: "Properties code was rejected",
@@ -5991,13 +6353,6 @@ export function App({
                           setDrawAngleMode(value.canvas.drawAngle);
                         if (value.canvas.scrollBehavior !== wheelBehavior)
                           setWheelBehavior(value.canvas.scrollBehavior);
-                        if (
-                          value.portLabels.suffixCase !==
-                            current.portLabels.suffixCase ||
-                          value.portLabels.suffixPlacement !==
-                            current.portLabels.suffixPlacement
-                        )
-                          setPortLabelFormat(value.portLabels);
                         setStatus("Updated Properties code");
                         return { ok: true as const };
                       },
@@ -6146,11 +6501,9 @@ export function App({
                           : {}),
                         displayName: selectedDisplayName,
                         itemName: selectedInstanceLabel
-                          ? flattenRichText(
-                              resolveAnnotationText(
-                                document,
-                                selectedInstanceLabel,
-                              ),
+                          ? resolveAnnotationName(
+                              document,
+                              selectedInstanceLabel,
                             )
                           : (selectedInstance.reference ?? selectedInstance.id),
                         defaultForeground: styleProfile.foreground,
@@ -7236,7 +7589,7 @@ export function App({
                   editorCommands.execute({ id: "properties.open" }),
               },
               {
-                label: "Duplicate (C)",
+                label: "Copy (C)",
                 enabled:
                   hasVisualSelection(visualSelection) &&
                   editorCommands.state({ id: "selection.copy" }).enabled,

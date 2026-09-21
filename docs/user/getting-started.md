@@ -40,8 +40,26 @@ is defined.
   canvas to box-select. Dragging one selected instance moves the whole
   selection atomically.
 - Internal wires and Junctions move with a selected component group; only
-  wires leaving the group stretch. Press `C` to pick up a copy of the selected
-  group and its internal wiring, then click to place it.
+  wires leaving the group stretch. Select the components and wires to reuse,
+  press `C` to copy and `V` to start placement, then click to place them.
+- To reuse an editable circuit in another tab or window, select it (or use
+  `Ctrl/Cmd+A`), press `Ctrl/Cmd+C`, then switch to the destination canvas and
+  press `Ctrl/Cmd+V`. Move the preview and click to place; `Esc` cancels. Devices,
+  parameters, selected wires, node labels, custom definitions and referenced
+  child Cells travel together. Name conflicts receive fresh names; explicit
+  global supplies retain their normal shared meaning. Each placement is one
+  undoable operation. In text/code fields, these shortcuts still copy and paste
+  text. Plain `C` and `V` use the same selection transport; pasting appends to
+  the destination, including when it already contains a circuit.
+- The compact project tab bar opens several independent circuits in one editor.
+  Use **+** for a new project, **Open file in new tab** for a local file, or
+  **Open Shelf project in tab** for a saved draft. Tabs keep separate cameras,
+  selections, undo histories, Cloud Save bindings and browser recovery copies.
+  Copy selected objects, switch tabs, and paste to merge them into that circuit.
+  Apply or discard pending code edits before switching. Closing an unsaved tab
+  asks first. Open tabs are an in-memory workspace, not a saved tab collection;
+  save your projects before leaving. Switching projects ends the previous
+  Agent connection and closes its simulation panel.
 - Use **Wire** or press `W`, then choose two pins, Junctions, or route segments.
   Passing across a conductor remains a Crossing; ending on one creates a
   Junction automatically. An exact multi-route intersection is rejected as
@@ -149,6 +167,28 @@ Blank parameters keep each component's existing value. The `symbol` field
 shows the common type; it is blank for differing types and is informational.
 Each valid code edit applies atomically and can be undone once. Invalid edits
 keep the last accepted drawing. Changing selection discards its pending draft.
+
+## Label names and typography
+
+Double-click a bound label to edit its text and formatting. Labels default to
+bold italic. Bold, italic, upright text, color, superscript and overbar remain
+independent of the electrical name; changing a name preserves those choices.
+`Use display alias` is off by default. Enable it only for a canvas-only name.
+
+An underscore introduces a subscript: `M_1` is displayed as M₁, while `M1`
+stays on the baseline. Applying or removing subscript in the text editor adds
+or removes the underscore in the netlist name. Netlist edits update the label
+in the other direction. Historical explicit label formatting is preserved on
+open; editing that label's text adopts this naming convention.
+
+In **Properties** code, `labels.subscriptCase` accepts `preserve`, `uppercase`
+or `lowercase`. Changing it renames existing underscore suffixes in both labels
+and the netlist for the current Cell, in one undoable change. The choice is
+stored in Project Code, not as a browser-wide preference. `preserve` leaves
+current spelling alone; use Undo to restore an earlier spelling. Same-name Nets
+and Pins denote one electrical connection. Instance names must remain unique:
+a collision keeps the draft open and suggests `Use display alias` in the status
+bar, without opening a blocking dialog.
 
 ## Arrow styles
 
@@ -314,7 +354,7 @@ at 3x with a bounded image size. SVG stays vector; formula glyphs remain paths,
 and the receiving application determines paste/editing support. Clipboard writes
 require HTTPS or localhost and browser permission. Failures are reported without
 silently downloading a file or substituting a different format. These commands
-do not change the existing **C** copy-placement workflow.
+remain separate from editable circuit copying with **C**, then **V**.
 
 Use **Netlist / Check and Save** to check the whole Project for ERC and
 visual issues and save it through the existing private Cloud Project service.
@@ -483,3 +523,24 @@ publishing to the Gallery is a deliberate, separate act rather than a backup.
 
 Before a public release, verify opening, refreshing, importing and exporting,
 browser recovery, and PWA installation at the deployed URL.
+
+
+## Gallery version history
+
+Open your Gallery entry, choose Publish, then **Version history**; your entries
+also offer this action on **My submissions**. The current publication and up to
+three previous snapshots are retained. Every update and restore snapshots the
+previous state; older snapshots are pruned.
+
+- **Compare** shows the historical and current published circuits side by side.
+  Added components are green, removed ones red, and modified ones amber. Click a
+  highlight or component row for parameter, placement, name and connection changes.
+  Choose a Cell to inspect a child circuit. The comparison does not edit the canvas.
+- **Branch** opens the complete historical Project as an independent draft. Save
+  it to create a new Shelf project; the original publication and draft are unchanged.
+- **Restore** updates the original publication while preserving its link and likes.
+  The pre-restore current version becomes a historical snapshot.
+
+History is available to the author and administrators/moderators. Previously
+pruned versions cannot be recovered by the new three-snapshot limit. This is a
+small publication history, not a full Git merge system or private Shelf timeline.

@@ -156,7 +156,7 @@ test("restores process and device choices, applies defaults and keeps edit/undo 
     .selectOption("spice");
   await code.fill((await code.innerText()).replace(/^XM1 /mu, "XM_load "));
   await code.press("Enter");
-  await expect(mosLabel).toHaveText("M_load");
+  await expect(mosLabel).toHaveText("Mload");
   await expect(code).toContainText("XM_load");
   await page.getByTestId("draw-tool-undo").click();
   await expect(mosLabel).toHaveText("M1");
@@ -177,7 +177,7 @@ test("restores process and device choices, applies defaults and keeps edit/undo 
     page.locator(
       '[data-layer="annotations"] [data-object-id="instance-label-M1"]',
     ),
-  ).toContainText("M_load");
+  ).toContainText("Mload");
   await page.getByRole("button", { name: "Default", exact: true }).click();
   await expect(page.getByLabel("Netlist format", { exact: true })).toHaveValue(
     "spice",
@@ -204,7 +204,7 @@ test("opens a built-in formatted device name with alias off and follows netlist 
   await expect(code).toHaveAttribute("contenteditable", "true");
   await code.fill((await code.innerText()).replace(/^CGS /mu, "C_input "));
   await code.press("Enter");
-  await expect(capacitorLabel).toContainText("C_input");
+  await expect(capacitorLabel).toContainText("Cinput");
   await page.getByTestId("annotation-hit-instance-label-C1").dblclick();
   await expect(
     page.getByRole("checkbox", { name: "Use display alias" }),
@@ -306,7 +306,7 @@ test("opens editable netlist by default, highlights a card, and synchronizes nam
   const initial = await code.innerText();
   await code.fill(initial.replace("R1 ", "R_load ").replace("10k", "22k"));
   await code.press("Enter");
-  await expect(label(page)).toContainText("R_load");
+  await expect(label(page)).toContainText("Rload");
   const saved = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
@@ -324,12 +324,12 @@ test("opens editable netlist by default, highlights a card, and synchronizes nam
   await expect(label(page)).toContainText("R1");
   await expect(code).toContainText("10k");
   await page.getByTestId("draw-tool-redo").click();
-  await expect(label(page)).toContainText("R_load");
+  await expect(label(page)).toContainText("Rload");
   await page.getByLabel("Netlist format").selectOption("spectre");
   await expect(code).toContainText("simulator lang=spectre");
   await code.fill((await code.innerText()).replace("R_load ", "R_final "));
   await code.press("Enter");
-  await expect(label(page)).toContainText("R_final");
+  await expect(label(page)).toContainText("Rfinal");
   expect(errors).toEqual([]);
 });
 
@@ -366,10 +366,10 @@ test("keeps explicit display aliases while renaming netlist and restores the liv
   await page.getByTestId("annotation-hit-label-R1").dblclick();
   await expect(alias).toBeChecked();
   await alias.uncheck();
-  await expect(label(page)).toContainText("R_new");
+  await expect(label(page)).toContainText("Rnew");
   await expect(
     page.getByRole("textbox", { name: "Canvas text editor" }),
-  ).toHaveValue("R_new");
+  ).toHaveText("Rnew");
   await page.getByRole("button", { name: "Apply text changes" }).click();
   await page.screenshot({ path: "plan/netlist-edit-preview.png" });
 });
@@ -436,4 +436,247 @@ test("opening and reopening Netlist preserves incomplete imported device data", 
   expect(saved.documents[0].instances[0].netlist.parameters).not.toHaveProperty(
     "value",
   );
+});
+
+test("bound labels retain typography on rename and support manual scripts without an alias", async ({
+  page,
+}) => {
+  await page.goto("/editor");
+  await awaitEditorReady(page);
+  await page.getByTestId("project-file").setInputFiles({
+    name: "label-format.icproj.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(fixture())),
+  });
+  await page.getByTestId("annotation-hit-label-R1").dblclick();
+  const editor = page.getByRole("textbox", { name: "Canvas text editor" });
+  const alias = page.getByRole("checkbox", { name: "Use display alias" });
+  await expect(alias).not.toBeChecked();
+  for (const name of ["Bold", "Italic", "Subscript", "Superscript"])
+    await expect(page.getByRole("button", { name, exact: true })).toBeVisible();
+  await expect(editor).toHaveAttribute("contenteditable", "true");
+  await editor.fill("R7");
+  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await expect(label(page)).toHaveText("R7");
+  const typefaces = () =>
+    label(page)
+      .locator("tspan")
+      .evaluateAll((elements) =>
+        elements
+          .filter((el) => el.childElementCount === 0 && el.textContent)
+          .map((el) => ({
+            weight: getComputedStyle(el).fontWeight,
+            style: getComputedStyle(el).fontStyle,
+          })),
+      );
+  expect(await typefaces()).toEqual([{ weight: "700", style: "italic" }]);
+  await page.getByTestId("annotation-hit-label-R1").dblclick();
+  await editor.click();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Shift+ArrowLeft");
+  await page.getByRole("button", { name: "Subscript", exact: true }).click();
+  await page.getByRole("button", { name: "Apply text changes" }).click();
+  const saved = parseSavedProject(
+    (await downloadBytes(page, "File", "Export Project File…")).toString(),
+  );
+  const annotation = saved.documents[0].annotations.find(
+    (item: { id: string }) => item.id === "label-R1",
+  );
+  expect(annotation.binding).toEqual({
+    kind: "instance-reference",
+    instanceId: "R1",
+  });
+  await expect(
+    label(page).locator('[data-text-run="subscript"]'),
+  ).toContainText("7");
+  expect(saved.documents[0].instances[0].reference).toBe("R_7");
+  const code = page.getByLabel("Netlist code", { exact: true });
+  await expect(code).toContainText("R_7");
+  await code.fill((await code.innerText()).replace("R_7 ", "R_8 "));
+  await code.press("Enter");
+  await expect(label(page)).toHaveText("R8");
+  expect(
+    (await typefaces()).every(
+      (face) => face.weight === "700" && face.style === "italic",
+    ),
+  ).toBe(true);
+  await page.getByTestId("annotation-hit-label-R1").dblclick();
+  await expect(alias).not.toBeChecked();
+  await expect(editor.locator("sub")).toHaveText("8");
+  await page.screenshot({ path: "plan/label-format-restored.png" });
+  await editor.press("ControlOrMeta+a");
+  await page.getByRole("button", { name: "Bold", exact: true }).click();
+  await page.getByRole("button", { name: "Italic", exact: true }).click();
+  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await expect(code).toContainText("R_8");
+  expect(
+    (await typefaces()).every(
+      (face) => face.weight === "400" && face.style === "normal",
+    ),
+  ).toBe(true);
+  await code.fill((await code.innerText()).replace("R_8 ", "R9 "));
+  await code.press("Enter");
+  await expect(label(page)).toHaveText("R9");
+  await expect(label(page).locator('[data-text-run="subscript"]')).toHaveCount(
+    0,
+  );
+  expect(
+    (await typefaces()).every(
+      (face) => face.weight === "400" && face.style === "normal",
+    ),
+  ).toBe(true);
+  await page.getByTestId("annotation-hit-label-R1").dblclick();
+  await page.getByRole("button", { name: "Cancel text changes" }).click();
+  await page.getByTestId("project-file").setInputFiles({
+    name: "label-format-reopened.icproj.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(saved)),
+  });
+  const discard = page.getByRole("button", {
+    name: "Discard and continue",
+    exact: true,
+  });
+  if (await discard.isVisible()) await discard.click();
+  await page.getByTestId("annotation-hit-label-R1").dblclick();
+  await expect(editor.locator("sub")).toHaveText("7");
+  await expect(alias).not.toBeChecked();
+});
+
+test("instance name collisions suggest an alias in status without interrupting the text editor", async ({
+  page,
+}) => {
+  await page.goto("/editor");
+  await awaitEditorReady(page);
+  await page.getByTestId("project-file").setInputFiles({
+    name: "alias-collision.icproj.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(fixture())),
+  });
+  await page.getByTestId("annotation-hit-label-R1").dblclick();
+  const editor = page.getByRole("textbox", { name: "Canvas text editor" });
+  await editor.fill("R2");
+  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await expect(page.getByTestId("status")).toContainText("Use display alias");
+  await expect(editor).toHaveText("R2");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(label(page)).toHaveText("R1");
+  await page.getByRole("checkbox", { name: "Use display alias" }).check();
+  await page.getByRole("button", { name: "Apply text changes" }).click();
+  await expect(label(page)).toHaveText("R2");
+  const saved = parseSavedProject(
+    (await downloadBytes(page, "File", "Export Project File…")).toString(),
+  );
+  expect(
+    saved.documents[0].instances.map(
+      (item: { reference: string }) => item.reference,
+    ),
+  ).toEqual(["R1", "R2"]);
+});
+
+test("subscript case changes the current circuit code and netlist with one undo", async ({
+  page,
+}) => {
+  const source = fixture();
+  source.documents[0]!.instances[0]!.reference = "R_load";
+  await page.goto("/editor");
+  await awaitEditorReady(page);
+  await page.getByTestId("project-file").setInputFiles({
+    name: "subscript-case.icproj.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(source)),
+  });
+  await page.getByTestId("draw-tool-document-style").click();
+  const setting = page.getByLabel(
+    "Subscript case in this circuit (label + netlist) options",
+    { exact: true },
+  );
+  await setting.selectOption("uppercase");
+  await expect(label(page)).toHaveText("RLOAD");
+  const saved = parseSavedProject(
+    (await downloadBytes(page, "File", "Export Project File…")).toString(),
+  );
+  expect(saved.documents[0].instances[0].reference).toBe("R_LOAD");
+  expect(saved.documents[0].presentation.labelSubscriptCase).toBe("uppercase");
+  await page.getByTestId("draw-tool-undo").click();
+  await expect(label(page)).toHaveText("Rload");
+  await expect(setting).toHaveValue("preserve");
+});
+
+test("opening and reopening a PDK BJT adds X only to SPICE, never its canvas name", async ({
+  page,
+}) => {
+  const project = fixture();
+  const doc = project.documents[0]!;
+  doc.instances = [
+    {
+      id: "Q1",
+      reference: "Q1",
+      symbolId: "pnp",
+      placement: { position: { x: 250, y: 200 }, rotation: 0, mirror: "none" },
+      netlist: {
+        binding: { kind: "external-subcircuit", definitionId: "pdk-pnp" },
+        parameters: { m: "1" },
+      },
+    },
+  ];
+  doc.annotations = [
+    {
+      ...doc.annotations[0]!,
+      id: "label-Q1",
+      binding: { kind: "instance-reference", instanceId: "Q1" },
+      anchor: {
+        kind: "object",
+        objectId: "Q1",
+        localOffset: { x: 40, y: 0 },
+        fallbackPosition: { x: 290, y: 200 },
+      },
+    },
+  ];
+  doc.nets = ["C", "B", "E"].map((pinName) => ({
+    id: `net-${pinName}`,
+    terminals: [{ instanceId: "Q1", pinName }],
+  }));
+  project.externalSubcircuitDefinitions.push({
+    id: "pdk-pnp",
+    name: "sky130_fd_pr__pnp_05v5_W0p68L0p68",
+    terminals: ["C", "B", "E"].map((name) => ({
+      id: name,
+      name,
+      direction: "passive",
+    })),
+    formalParameters: [],
+    interfaceStatus: "declared",
+  });
+  await page.goto("/editor");
+  await awaitEditorReady(page);
+  await page.getByTestId("project-file").setInputFiles({
+    name: "pnp.icproj.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(project)),
+  });
+  const canvasLabel = page.locator(
+    '[data-layer="annotations"] [data-object-id="label-Q1"]',
+  );
+  const code = page.getByLabel("Netlist code", { exact: true });
+  await expect(canvasLabel).toHaveText("Q1");
+  await page
+    .getByLabel("Netlist format", { exact: true })
+    .selectOption("spice");
+  await expect(code).toContainText("XQ1 ");
+  const saved = await downloadBytes(page, "File", "Export Project File…");
+  await page.getByTestId("project-file").setInputFiles({
+    name: "pnp-reopen.icproj.json",
+    mimeType: "application/json",
+    buffer: saved,
+  });
+  await expect(canvasLabel).toHaveText("Q1");
+  await page
+    .getByLabel("Netlist format", { exact: true })
+    .selectOption("spectre");
+  await expect(code).toContainText("Q1 (");
+  await expect(code).not.toContainText("XQ1");
+  await page.getByTestId("annotation-hit-label-Q1").dblclick();
+  await expect(
+    page.getByRole("textbox", { name: "Canvas text editor" }),
+  ).toHaveText("Q1");
 });
