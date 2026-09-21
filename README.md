@@ -40,6 +40,19 @@ An explicit **File / Save** updates one private Cloud Project in place. Local
 `.icproj.json` files are portable import/export and backup artifacts; browser
 recovery is an origin-local crash-safety copy. Neither is confused with formal
 Cloud Save, and Community Gallery entries remain separate public publications.
+Shelf cards offer **Version history** for the latest three earlier saves: compare
+component changes, restore with conflict protection, or create an independent
+private branch. Restoring a draft never updates its Gallery publication.
+Refreshing the editor restores that browser window’s open project tabs,
+including unsaved circuit content, the active tab, and view positions. This
+browser-local workspace does not replace Cloud Save or portable file backups;
+undo stacks and unfinished text-field edits are not restored.
+Hosted topology checks run against the clicked snapshot in a private background
+task. Refreshing or closing the page does not cancel it; reopen the editor to
+view progress/results. Results remain available for seven days. Comparisons
+use bounded search and explicitly mark incomplete coverage; the best 20
+results are retained within an 8 MiB result budget. Vite without the hosted
+backend shows a local-only fallback that requires keeping its page open.
 The hosted service keeps its visitor reporting first-party and honors browser
 Do Not Track instead of embedding a third-party analytics tracker.
 

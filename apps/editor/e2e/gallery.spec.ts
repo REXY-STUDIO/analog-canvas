@@ -1364,6 +1364,86 @@ test("the account chip sits on the header line and ellipsizes a long name", asyn
   expect(overflowing.display).not.toContain("flex");
 });
 
+test("tag categories select all children, retain other groups and expose mixed selection", async ({
+  page,
+}) => {
+  const queries: string[][] = [];
+  await page.route("**/api/gallery**", (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/api/gallery/tags")
+      return route.fulfill({
+        json: {
+          tags: [
+            { tag: "amplifier", count: 3 },
+            { tag: "op", count: 1 },
+            { tag: "buffer", count: 2 },
+          ],
+        },
+      });
+    if (url.pathname !== "/api/gallery") return route.fallback();
+    queries.push(
+      (url.searchParams.get("tags") ?? "").split(",").filter(Boolean),
+    );
+    return route.fulfill({ json: { entries: [], nextCursor: null } });
+  });
+  await page.goto("/?tags=buffer");
+  const sidebar = page.getByTestId("gallery-tag-sidebar");
+  const category = sidebar.getByRole("checkbox", {
+    name: "Amplifiers",
+    exact: true,
+  });
+  const buffer = sidebar.getByRole("checkbox", {
+    name: "Buffers",
+    exact: true,
+  });
+  const group = sidebar.locator(".gallery-tag-group").filter({
+    has: page.getByRole("checkbox", { name: "Amplifiers", exact: true }),
+  });
+  await expect(category).toHaveAttribute("aria-checked", "false");
+  await expect(buffer).toHaveAttribute("aria-checked", "true");
+  await category.click();
+  await expect(category).toHaveAttribute("aria-checked", "true");
+  const children = group.locator(".gallery-sidebar-tag");
+  expect(await children.count()).toBeGreaterThan(20);
+  await expect(
+    group.locator('.gallery-sidebar-tag[aria-pressed="true"]'),
+  ).toHaveCount(await children.count());
+  await expect
+    .poll(() => queries.at(-1))
+    .toEqual(
+      expect.arrayContaining([
+        "buffer",
+        "op",
+        "ota",
+        "amplifier",
+        "source degeneration",
+      ]),
+    );
+  await page.getByTestId("gallery-tag-option-ota").click();
+  await expect(category).toHaveAttribute("aria-checked", "mixed");
+  await category.press("Space");
+  await expect(category).toHaveAttribute("aria-checked", "true");
+  // Collapse is independent of selection, and selected groups can collapse.
+  await sidebar
+    .getByRole("button", { name: "Collapse Amplifiers", exact: true })
+    .click();
+  await expect(page.getByTestId("gallery-tag-option-ota")).toBeHidden();
+  await expect(category).toHaveAttribute("aria-checked", "true");
+  await page.reload();
+  await expect(category).toHaveAttribute("aria-checked", "true");
+  await category.press("Enter");
+  await expect(category).toHaveAttribute("aria-checked", "false");
+  await expect(buffer).toHaveAttribute("aria-checked", "true");
+  await expect.poll(() => queries.at(-1)).toEqual(["buffer"]);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: /^Search & filters/ }).click();
+  await category.click();
+  await expect(category).toHaveAttribute("aria-checked", "true");
+  await category.click();
+  await expect(category).toHaveAttribute("aria-checked", "false");
+  await expect(buffer).toHaveAttribute("aria-checked", "true");
+});
+
 test("the left sidebar hosts overall search and grouped tags at desktop, half-screen and mobile widths", async ({
   page,
 }) => {
@@ -1437,10 +1517,8 @@ test("the left sidebar hosts overall search and grouped tags at desktop, half-sc
   );
   expect(
     await sidebar
-      .locator(".gallery-tag-group > summary")
-      .evaluateAll((items) =>
-        items.map((item) => item.firstChild?.textContent?.trim()),
-      ),
+      .locator(".gallery-tag-group-name")
+      .evaluateAll((items) => items.map((item) => item.textContent?.trim())),
   ).toEqual([
     "Amplifiers",
     "Bias & references",
@@ -1458,20 +1536,25 @@ test("the left sidebar hosts overall search and grouped tags at desktop, half-sc
     "Sampling",
     "Sensors",
   ]);
-  const amplifierGroup = sidebar
-    .locator("summary")
-    .filter({ hasText: "Amplifiers" });
+  const amplifierGroup = sidebar.getByRole("checkbox", {
+    name: "Amplifiers",
+    exact: true,
+  });
   await expect(
-    sidebar.locator("summary").filter({ hasText: "Buffers" }).locator("span"),
+    sidebar
+      .getByRole("checkbox", { name: "Buffers", exact: true })
+      .locator(".gallery-sidebar-count"),
   ).toHaveText("23");
   await expect(amplifierGroup).toBeVisible();
   await expect(amplifierGroup).toHaveCSS("font-weight", "600");
-  await amplifierGroup.click();
+  await sidebar
+    .getByRole("button", { name: "Expand Amplifiers", exact: true })
+    .click();
   const amplifier = page.getByTestId("gallery-tag-option-amplifier");
   await expect(amplifier).toContainText("General Amplifier");
   expect((await amplifier.boundingBox())!.height).toBeLessThanOrEqual(28);
   const sidebarRhythm = await amplifierGroup.evaluate((summary) => {
-    const group = summary.parentElement!;
+    const group = summary.closest(".gallery-tag-group")!;
     const items = [
       ...group.querySelectorAll<HTMLElement>(".gallery-sidebar-tag"),
     ];
@@ -1504,13 +1587,19 @@ test("the left sidebar hosts overall search and grouped tags at desktop, half-sc
   const search = page.getByTestId("gallery-search");
   await expect(search).toHaveCount(1);
   await expect(page.getByTestId("gallery-tag-search")).toHaveCount(0);
-  await sidebar.locator("summary").filter({ hasText: "Conversion" }).click();
+  await sidebar
+    .getByRole("button", { name: "Expand Conversion", exact: true })
+    .click();
   await expect(page.getByTestId("gallery-tag-option-adc")).toContainText("ADC");
-  const logicGroup = page.getByTestId("gallery-tag-option-and").locator("..");
-  await logicGroup.locator("summary").click();
+  const logicGroup = sidebar.locator(".gallery-tag-group").filter({
+    has: page.getByRole("checkbox", { name: "Logic & memory", exact: true }),
+  });
+  await logicGroup
+    .getByRole("button", { name: "Expand Logic & memory", exact: true })
+    .click();
   await expect(
     logicGroup
-      .locator(".gallery-tag-name")
+      .locator(".gallery-sidebar-tag .gallery-tag-name")
       .evaluateAll((items) => items.map((item) => item.textContent)),
   ).resolves.toEqual([
     "AND",
@@ -1534,8 +1623,7 @@ test("the left sidebar hosts overall search and grouped tags at desktop, half-sc
     "XOR",
   ]);
   await sidebar
-    .locator("summary")
-    .filter({ hasText: /^Power/ })
+    .getByRole("button", { name: "Expand Power", exact: true })
     .click();
   const ldo = page.getByTestId("gallery-tag-option-ldo");
   await expect(ldo).toHaveCount(1);
@@ -1992,8 +2080,12 @@ test("the tag menu multi-selects and tile tags join the selection", async ({
 
   // Multi-select two tags: OR union, URL carried.
   const sidebar = page.getByTestId("gallery-tag-sidebar");
-  await sidebar.locator("summary").filter({ hasText: "Amplifiers" }).click();
-  await sidebar.locator("summary").filter({ hasText: "Conversion" }).click();
+  await sidebar
+    .getByRole("button", { name: "Expand Amplifiers", exact: true })
+    .click();
+  await sidebar
+    .getByRole("button", { name: "Expand Conversion", exact: true })
+    .click();
   const search = page.getByTestId("gallery-search");
   await search.fill("amplifier");
   await page.getByTestId("gallery-tag-option-amplifier").click();
@@ -4180,4 +4272,197 @@ test("Gallery historical branch link creates an independent project and unavaila
   await expect(page.getByTestId("status")).toContainText(
     "snapshot is unavailable",
   );
+});
+
+test("Shelf save history compares, branches privately and restores with the listed revision", async ({
+  page,
+}) => {
+  const before = galleryResistorProject("1k");
+  const after = galleryResistorProject("2k");
+  const summary = {
+    id: "draft",
+    name: "Private amplifier",
+    revision: 4,
+    updatedAt: "2026-09-21T08:00:00Z",
+    schemaVersion: CURRENT_PROJECT_FILE_VERSION,
+  };
+  let branch: { projectText: string; galleryEntryId?: string } | undefined;
+  let restored = false;
+  await page.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: {
+        user: {
+          id: "owner",
+          displayName: "Author",
+          role: "user",
+          isAdmin: false,
+        },
+      },
+    }),
+  );
+  await mockGallery(page, []);
+  await page.route("**/api/projects**", (route) => {
+    const req = route.request();
+    const path = new URL(req.url()).pathname;
+    if (path.endsWith("/preview.svg"))
+      return route.fulfill({
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg"/>',
+      });
+    if (path.endsWith("/restore")) {
+      expect(req.headers()["if-match"]).toBe("revision-4");
+      restored = true;
+      return route.fulfill({ json: { project: { ...summary, revision: 5 } } });
+    }
+    if (path.endsWith("/versions"))
+      return route.fulfill({
+        json: {
+          revision: 4,
+          versions: [
+            {
+              versionId: "draft:3",
+              versionNo: 3,
+              name: "Earlier amplifier",
+              author: "",
+              tags: [],
+              createdAt: summary.updatedAt,
+            },
+          ],
+        },
+      });
+    if (path.endsWith("/project"))
+      return route.fulfill({ json: { projectText: serializeProject(before) } });
+    if (req.method() === "POST") {
+      branch = req.postDataJSON();
+      return route.fulfill({
+        status: 201,
+        json: { project: { ...summary, id: "branch", revision: 1 } },
+      });
+    }
+    return route.fulfill({
+      json:
+        path === "/api/projects"
+          ? { projects: [summary] }
+          : { project: { ...summary, projectText: serializeProject(after) } },
+    });
+  });
+  await page.goto("/?view=shelf");
+  const openHistory = async () => {
+    await page.getByTestId("shelf-actions-draft").click();
+    await page.getByRole("menuitem", { name: "Version history" }).click();
+    await expect(page.getByTestId("version-history-dialog")).toContainText(
+      "current draft kept separately",
+    );
+  };
+  await openHistory();
+  await page.getByTestId("version-compare-3").click();
+  await expect(page.getByTestId("version-comparison")).toContainText(
+    "2 modified",
+  );
+  await page.getByTestId("version-branch-3").click();
+  await expect(page.getByTestId("version-history-dialog")).toHaveCount(0);
+  expect(branch?.galleryEntryId).toBeUndefined();
+  expect(parseProject(branch!.projectText).id).not.toBe(before.id);
+  await openHistory();
+  await page.getByTestId("version-restore-3").click();
+  await expect(page.getByTestId("version-history-dialog")).toHaveCount(0);
+  expect(restored).toBe(true);
+});
+
+test("durable duplicate check reconnects after reload and a closed browser page", async ({
+  page,
+  context,
+}) => {
+  let job: {
+    id: string;
+    revision: number;
+    projectText: string;
+    running: boolean;
+    dismissed: boolean;
+    report: {
+      scanned: number;
+      total: number;
+      comparable: number;
+      matches: [];
+      uncheckable: number;
+      complete: boolean;
+    };
+  } | null = null;
+  await context.route("**/api/auth/me", (route) =>
+    route.fulfill({
+      json: {
+        user: {
+          id: "publisher",
+          displayName: "Publisher",
+          provider: "github",
+          role: "user",
+          isAdmin: false,
+        },
+      },
+    }),
+  );
+  let starts = 0;
+  await context.route("**/api/topology-task**", (route) => {
+    if (route.request().method() === "POST") {
+      starts++;
+      const body = route.request().postDataJSON();
+      job = {
+        id: body.id,
+        revision: 1,
+        projectText: body.projectText,
+        running: true,
+        dismissed: false,
+        report: {
+          scanned: 1,
+          total: 7,
+          comparable: 1,
+          matches: [],
+          uncheckable: 0,
+          complete: false,
+        },
+      };
+    }
+    return route.fulfill({ json: { job } });
+  });
+  await mockGallery(page, []);
+  await page.goto("/editor?new=1");
+  await chooseComponent(page, "resistor");
+  await page
+    .getByTestId("schematic-canvas")
+    .click({ position: { x: 300, y: 230 } });
+  await page.keyboard.press("Escape");
+  await page.getByTestId("publish-gallery-button").click();
+  await page.getByTestId("gallery-find-similar").click();
+  await expect(page.getByTestId("gallery-topology-check")).toContainText(
+    "1 / 7",
+  );
+  const originalText = job!.projectText;
+  page.on("dialog", (dialog) => dialog.accept());
+  await page.reload();
+  await expect(page.getByTestId("gallery-topology-task-notice")).toContainText(
+    "1 compared",
+  );
+  expect(starts).toBe(1);
+  await page.close();
+  // The server finishes while no page exists; reopening merely reads it.
+  job = {
+    ...job!,
+    revision: 2,
+    running: false,
+    report: { ...job!.report, scanned: 7, comparable: 7, complete: true },
+  };
+  const reopened = await context.newPage();
+  await reopened.goto("/editor?new=1");
+  await expect(
+    reopened.getByTestId("gallery-topology-task-notice"),
+  ).toContainText("Duplicate check finished");
+  await reopened
+    .getByRole("button", { name: "View results", exact: true })
+    .click();
+  await expect(reopened.getByTestId("gallery-topology-check")).toContainText(
+    "7 comparable circuits checked",
+  );
+  expect(job.projectText).toBe(originalText);
+  expect(starts).toBe(1);
+  await reopened.close();
 });
