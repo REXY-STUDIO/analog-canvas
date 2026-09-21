@@ -74,11 +74,13 @@ export function symbolCategory(symbolId: string): string {
       "adc",
       "dac",
       "opamp",
+      "opamp-wide",
       "opamp-lettered",
       "voltage-amplifier-lettered",
       "transconductance",
       "differential-transconductance",
       "opamp-differential",
+      "opamp-differential-wide",
       "opamp-differential-lettered",
       "opamp-differential-crossed",
       "opamp-differential-crossed-lettered",
@@ -149,6 +151,10 @@ export function symbolCategory(symbolId: string): string {
  * Both remain independently authored interface objects in the current model.
  */
 const LIBRARY_DISPLAY_NAMES: Readonly<Record<string, string>> = {
+  opamp: "Op Amp S",
+  "opamp-wide": "Op Amp",
+  "opamp-differential": "FD Amp S",
+  "opamp-differential-wide": "FD Amp",
   "depletion-nmos": "D-NMOS",
   "depletion-pmos": "D-PMOS",
   "externally-controlled-switch": "Ctrl SW",
@@ -158,6 +164,10 @@ const LIBRARY_DISPLAY_NAMES: Readonly<Record<string, string>> = {
 
 /** One line saying what an entry does, where the name alone leaves a doubt. */
 const LIBRARY_DESCRIPTIONS: Readonly<Record<string, string>> = {
+  opamp: "Compact Op Amp — input pin spacing: 20",
+  "opamp-wide": "Op Amp — input pin spacing: 40",
+  "opamp-differential": "Compact FD Amp — input/output pin spacing: 20",
+  "opamp-differential-wide": "FD Amp — input/output pin spacing: 40",
   "d-flip-flop-reset":
     "Rising-edge D flip-flop with an active-high asynchronous reset",
   "voltage-controlled-switch":
@@ -254,7 +264,9 @@ const SYMBOL_ORDER: readonly string[] = [
   // a differential amplifier between them. A reader looking for one converter
   // is looking for the pair, so they sit together, after the amplifiers and
   // comparators an analog schematic reaches for far more often.
+  "opamp-wide",
   "opamp",
+  "opamp-differential-wide",
   "opamp-differential",
   "voltage-amplifier",
   "transconductance",
@@ -281,7 +293,7 @@ function symbolRank(symbolId: string): number {
 function searchableText(symbol: SymbolDefinition): string {
   const formula = symbol.formulaPresentation?.defaultFormula ?? "";
   return normalizeSignalFlowFormula(
-    `${symbol.name} ${symbol.id} ${formula}`,
+    `${libraryDisplayName(symbol.id, symbol.name)} ${symbol.name} ${symbol.id} ${formula}`,
   ).toLowerCase();
 }
 
