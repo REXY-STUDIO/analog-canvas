@@ -337,3 +337,135 @@ test("refresh restores every unsaved tab and active view without crossing browse
   await expect(page.getByRole("tab")).toHaveCount(3);
   await other.close();
 });
+
+for (const modifier of ["Control", "Meta", "plain"]) {
+  test(`${modifier} C/V copies a wired subset into an existing project`, async ({
+    page,
+    context,
+  }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.goto("/editor?new=1");
+    await insert(page, "nmos", 260, 200);
+    await insert(page, "nmos", 450, 200);
+    await insert(page, "resistor", 600, 400);
+    await page.keyboard.press("w");
+    await page.getByTestId("terminal-M1-S").click();
+    await page.getByTestId("terminal-M2-S").click();
+    await page.keyboard.press("Escape");
+    // Box-select both transistors and their wire, leaving the resistor behind.
+    const a = (await page.getByTestId("hit-M1").boundingBox())!;
+    const b = (await page.getByTestId("hit-M2").boundingBox())!;
+    await page.mouse.move(Math.min(a.x, b.x) - 25, Math.min(a.y, b.y) - 25);
+    await page.mouse.down();
+    await page.mouse.move(
+      Math.max(a.x + a.width, b.x + b.width) + 25,
+      Math.max(a.y + a.height, b.y + b.height) + 25,
+      { steps: 5 },
+    );
+    await page.mouse.up();
+    const key = (letter: string) =>
+      modifier === "plain" ? letter : `${modifier}+${letter}`;
+    // A leftover browser selection in the header must not take ownership
+    // once the canvas has focus again.
+    await page.evaluate(() => {
+      const range = document.createRange();
+      range.selectNodeContents(document.querySelector("h1")!);
+      window.getSelection()!.removeAllRanges();
+      window.getSelection()!.addRange(range);
+    });
+    await page.getByTestId("schematic-canvas").focus();
+    await page.keyboard.press(key("c"));
+    await expect(page.getByTestId("status")).toContainText("Circuit copied");
+    const encoded = await page.evaluate(() => navigator.clipboard.readText());
+    const source = JSON.parse(encoded).project.documents[0];
+    expect(source.instances).toHaveLength(2);
+    expect(source.routes.length).toBeGreaterThan(0);
+    await page
+      .getByRole("button", { name: "New project tab", exact: true })
+      .click();
+    await insert(page, "capacitor", 300, 400);
+    await page.keyboard.press(key("v"));
+    await expect(page.getByTestId("status")).toContainText("click to place");
+    await page
+      .getByTestId("schematic-canvas")
+      .click({ position: { x: 380, y: 200 } });
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("active-instance-count")).toHaveText("3");
+    await expect(page.locator('[data-layer="routes"] polyline')).toHaveCount(
+      source.routes.length,
+    );
+    const result = (await saved(page)).documents[0]!;
+    expect(
+      result.instances.filter((item) => item.symbolId === "nmos"),
+    ).toHaveLength(2);
+    expect(
+      result.instances.filter((item) => item.symbolId === "capacitor"),
+    ).toHaveLength(1);
+    expect(result.instances.some((item) => item.symbolId === "resistor")).toBe(
+      false,
+    );
+    // A single undo removes the appended group, keeping the target capacitor.
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(page.getByTestId("active-instance-count")).toHaveText("1");
+    await page.getByRole("tab").first().click();
+    await expect(page.getByTestId("active-instance-count")).toHaveText("3");
+  });
+}
+
+test("Project menu keeps long names out of the header and switches checked projects", async ({
+  page,
+}) => {
+  await page.goto("/editor?new=1");
+  await insert(page, "resistor", 260, 220);
+  const toggle = page.getByTestId("project-menu-toggle");
+  const menu = page.getByRole("region", {
+    name: "Project details",
+    exact: true,
+  });
+  const longName =
+    "Voltage regulator with a very long circuit name for temperature and supply characterization";
+  await expect(menu).toBeHidden();
+  await toggle.click();
+  const name = page.getByTestId("project-name-input");
+  await name.fill(longName);
+  await name.press("Enter");
+  await expect(menu).toBeHidden();
+  await expect(toggle).toHaveAttribute("title", longName);
+  await expect(toggle).not.toContainText(longName);
+  for (const width of [1360, 720]) {
+    await page.setViewportSize({ width, height: 900 });
+    const brand = (await page.locator(".gallery-home-link").boundingBox())!;
+    const trigger = (await toggle.boundingBox())!;
+    expect(trigger.x).toBeGreaterThanOrEqual(brand.x + brand.width);
+    expect(trigger.width).toBeLessThan(120);
+    await toggle.click();
+    await expect(name).toHaveValue(longName);
+    const bounds = (await menu.boundingBox())!;
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+    await page.screenshot({ path: `plan/project-menu-${width}.png` });
+    await page.keyboard.press("Escape");
+    await expect(menu).toBeHidden();
+  }
+  await page
+    .getByRole("button", { name: "New project tab", exact: true })
+    .click();
+  await insert(page, "capacitor", 340, 260);
+  await toggle.click();
+  const current = menu.getByRole("menuitemradio", { checked: true });
+  await expect(current).toContainText("New Circuit");
+  const first = menu.getByRole("menuitemradio").filter({ hasText: longName });
+  await first.focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(current).toBeFocused();
+  await first.click();
+  await expect(menu).toBeHidden();
+  await expect(page.getByTestId("hit-R1")).toHaveCount(1);
+  await expect(page.getByTestId("hit-C1")).toHaveCount(0);
+  await toggle.click();
+  await expect(first).toHaveAttribute("aria-checked", "true");
+  await name.fill("Uncommitted rename");
+  await name.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(toggle).toHaveAttribute("title", longName);
+});
