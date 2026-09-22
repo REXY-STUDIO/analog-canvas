@@ -33,6 +33,66 @@ const catalog = (files: ArtifactRef[]): ResultCatalog => ({
   datasets: [],
 });
 describe("local simulation workspace", () => {
+  it("refills a free slot without waiting for its slow peer and preserves catalog order", async () => {
+    const root = await mkdtemp(join(tmpdir(), "icm-rolling-base-"));
+    let release!: () => void;
+    const slow = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    try {
+      const base = await LocalWorkspace.open(scope, root);
+      const started: string[] = [];
+      let bothStarted!: () => void;
+      const firstPair = new Promise<void>((resolve) => {
+        bothStarted = resolve;
+      });
+      let active = 0;
+      let peak = 0;
+      const pending = base.sync(
+        catalog([
+          file("one", "one"),
+          file("two", "two"),
+          file("three", "three"),
+        ]),
+        async (ref) => {
+          started.push(ref.id);
+          peak = Math.max(peak, ++active);
+          if (started.length === 2) bothStarted();
+          await firstPair;
+          if (ref.id === "one") await slow;
+          active--;
+          return new Response(ref.id);
+        },
+      );
+      await vi.waitFor(
+        () => expect([...started].sort()).toEqual(["one", "three", "two"]),
+        { timeout: 10_000 },
+      );
+      release();
+      const result = await pending;
+      expect(peak).toBe(2);
+      expect(result.files.map((item) => item.id)).toEqual([
+        "one",
+        "two",
+        "three",
+      ]);
+      for (const item of result.files) {
+        expect(item.timing.elapsedMs).toBeGreaterThanOrEqual(
+          item.timing.remoteWaitMs,
+        );
+      }
+      const reused = await base.sync(
+        catalog([file("one", "one")]),
+        async () => {
+          throw new Error("Must reuse locally");
+        },
+      );
+      expect(reused.files[0]?.timing.remoteWaitMs).toBe(0);
+    } finally {
+      release();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it("selects an analysis table without downloading other representations or losing the directory", async () => {
     const root = await mkdtemp(join(tmpdir(), "icm-select-base-"));
     try {
