@@ -40,6 +40,14 @@ import { exportFile, importFile } from "./file-operations.js";
 import { compactSchema } from "./compact-schema.js";
 import { inlineSchema } from "./inline-schema.js";
 import { waitForSimulation } from "./simulation-wait.js";
+import {
+  ContractQueryError,
+  DescribeToolArgs,
+  ToolContractRegistry,
+} from "./tool-contracts.js";
+import { editContract } from "./edit-contracts.js";
+import { focusedTools, FOCUSED_TOOLS } from "./focused-tools.js";
+import { declarationSchema } from "./declaration-schema.js";
 
 /**
  * The default MCP tool surface (Agent rationale) stays compact. The full
@@ -378,6 +386,18 @@ function textResult(value: unknown, isError = false): McpToolCallResult {
 }
 
 export function toolErrorResponse(error: unknown): McpToolCallResult {
+  if (error instanceof ContractQueryError)
+    return textResult(
+      {
+        ok: false,
+        error: {
+          code: error.code,
+          message: error.message,
+          recovery: "fix-input",
+        },
+      },
+      true,
+    );
   if (error instanceof z.ZodError) {
     return textResult(
       {
@@ -423,7 +443,24 @@ export function toolErrorResponse(error: unknown): McpToolCallResult {
   );
 }
 
-const TOOLS: readonly ToolEntry[] = [
+const ORIGINAL_TOOLS: readonly ToolEntry[] = [
+  {
+    definition: {
+      name: "describe_tool",
+      description: agentToolHelp["describe_tool"],
+      inputSchema: jsonSchemaOf(DescribeToolArgs),
+    },
+    handle: async (args) => {
+      const query = DescribeToolArgs.parse(args);
+      return query.editKind
+        ? {
+            contractVersion: AGENT_MCP_VERSION,
+            editKind: query.editKind,
+            inputSchema: editContract(query.editKind),
+          }
+        : describeToolContract(query);
+    },
+  },
   {
     definition: {
       name: "connect",
@@ -1071,9 +1108,19 @@ const TOOLS: readonly ToolEntry[] = [
   },
 ];
 
+const TOOLS: readonly ToolEntry[] = [
+  ...ORIGINAL_TOOLS,
+  ...focusedTools(ORIGINAL_TOOLS, (name) => agentToolHelp[name]),
+];
+
 export function listToolDefinitions(): McpToolDefinition[] {
   return TOOLS.map(({ definition }) => {
     let schema = definition.inputSchema;
+    if (FOCUSED_TOOLS.some((tool) => tool.name === definition.name))
+      return {
+        ...definition,
+        inputSchema: declarationSchema(schema, definition.name),
+      };
     if (
       [
         "simulation",
@@ -1115,6 +1162,20 @@ export function listToolDefinitions(): McpToolDefinition[] {
       inputSchema: advertised,
     };
   });
+}
+
+let contractRegistry: ToolContractRegistry | undefined;
+export function describeToolContract(query: {
+  tool?: string | undefined;
+  operations?: string[] | undefined;
+  field?: string | undefined;
+}) {
+  DescribeToolArgs.parse(query);
+  contractRegistry ??= new ToolContractRegistry(
+    TOOLS.map((t) => t.definition),
+    AGENT_MCP_VERSION,
+  );
+  return contractRegistry.describe(query);
 }
 
 /** On-demand complete input contract; dispatch still parses the original schema. */
