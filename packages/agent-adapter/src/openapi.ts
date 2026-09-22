@@ -245,6 +245,12 @@ export const agentTransportErrorExamples = {
 function transportErrorResponse(
   example: (typeof agentTransportErrorExamples)[keyof typeof agentTransportErrorExamples],
 ) {
+  return { $ref: `#/components/responses/${example.error.code}` } as const;
+}
+
+function transportErrorDefinition(
+  example: (typeof agentTransportErrorExamples)[keyof typeof agentTransportErrorExamples],
+) {
   return {
     description: "Typed Agent session transport error",
     content: {
@@ -259,6 +265,13 @@ function transportErrorResponse(
 const circuitSessionResponses = {
   "200": {
     description: "Circuit API response",
+    headers: {
+      "x-agent-context": {
+        description:
+          "Browser context stamp; use a successful snapshot's value for subsequent Project-bound requests",
+        schema: { type: "string" },
+      },
+    },
     content: { "application/json": { schema: agentCircuitResponseRef } },
   },
   "400": {
@@ -494,6 +507,13 @@ export const agentCircuitOpenApi = {
         security: [{ bearerAuth: [] }],
         parameters: [
           {
+            name: "x-agent-context",
+            in: "header",
+            description:
+              "Required for Project-bound operations; snapshot/capabilities discover current context without it",
+            schema: { type: "string" },
+          },
+          {
             name: "sessionId",
             in: "path",
             required: true,
@@ -519,6 +539,12 @@ export const agentCircuitOpenApi = {
         security: [{ bearerAuth: [] }],
         parameters: [
           {
+            name: "x-agent-context",
+            in: "header",
+            required: true,
+            schema: { type: "string" },
+          },
+          {
             name: "sessionId",
             in: "path",
             required: true,
@@ -540,6 +566,12 @@ export const agentCircuitOpenApi = {
         description: agentApiHelp.agentSessionSimulationResource,
         security: [{ bearerAuth: [] }],
         parameters: [
+          {
+            name: "x-agent-context",
+            in: "header",
+            required: true,
+            schema: { type: "string" },
+          },
           {
             name: "sessionId",
             in: "path",
@@ -563,6 +595,12 @@ export const agentCircuitOpenApi = {
         security: [{ bearerAuth: [] }],
         parameters: [
           {
+            name: "x-agent-context",
+            in: "header",
+            required: true,
+            schema: { type: "string" },
+          },
+          {
             name: "sessionId",
             in: "path",
             required: true,
@@ -580,6 +618,12 @@ export const agentCircuitOpenApi = {
     },
   },
   components: {
+    responses: Object.fromEntries(
+      Object.values(agentTransportErrorExamples).map((example) => [
+        example.error.code,
+        transportErrorDefinition(example),
+      ]),
+    ),
     securitySchemes: {
       bearerAuth: { type: "http", scheme: "bearer" },
     },

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { downloadSimulationArtifact } from "./artifact-download.js";
 import { LocalWorkspace, defaultWorkspacePath } from "./local-workspace.js";
 import { simulationAuthoringTools } from "./simulation-authoring-tools.js";
+import { PreparePlotSchema, preparePlot } from "./prepare-plot.js";
 import {
   SimulationOperationSchema,
   ArtifactRefSchema,
@@ -12,6 +13,7 @@ import {
   AGENT_API_VERSION,
   AGENT_MCP_VERSION,
   AgentFileDownloadOptionsSchema,
+  AgentWorkspaceActionSchema,
 } from "@icm/agent-adapter";
 import {
   AgentAuthoringCommandSchema,
@@ -88,6 +90,10 @@ const SimulationArgs = z
       });
   });
 const ProjectCellsArgs = z.discriminatedUnion("action", [
+  z.strictObject({
+    action: z.literal("workspace"),
+    request: AgentWorkspaceActionSchema,
+  }),
   z.strictObject({ action: z.literal("list-projects") }),
   z.strictObject({
     action: z.literal("list-cells"),
@@ -149,6 +155,7 @@ const NetlistCodeArgs = z.discriminatedUnion("action", [
 ]);
 const SimulationFilesArgs = z.strictObject({
   request: z.union([
+    PreparePlotSchema,
     SimulationFileOperationSchema,
     z.strictObject({ action: z.literal("workspace") }),
     z.strictObject({
@@ -439,6 +446,13 @@ const TOOLS: readonly ToolEntry[] = [
     },
     handle: async (args, session) => {
       const parsed = ProjectCellsArgs.parse(args);
+      if (parsed.action === "workspace")
+        return session.client.projectResource({
+          apiVersion: AGENT_API_VERSION,
+          requestId: crypto.randomUUID(),
+          operation: "workspace",
+          request: parsed.request,
+        });
       if (parsed.action === "list-projects") {
         return session.client.projectResource({
           apiVersion: AGENT_API_VERSION,
@@ -710,7 +724,7 @@ const TOOLS: readonly ToolEntry[] = [
         }
         return (await localWorkspace(session, basePath)).describe();
       }
-      if (request.action === "sync") {
+      if (request.action === "sync" || request.action === "prepare-plot") {
         const response = await session.client.simulationResource({
           apiVersion: AGENT_API_VERSION,
           requestId: requestId ?? crypto.randomUUID(),
@@ -719,6 +733,13 @@ const TOOLS: readonly ToolEntry[] = [
         });
         if (!response.ok || !("catalog" in response)) return response;
         const workspace = await localWorkspace(session, basePath);
+        if (request.action === "prepare-plot")
+          return preparePlot(
+            workspace,
+            response.catalog,
+            request,
+            (ref, offset) => fetchWorkspaceArtifact(session, ref.id, offset),
+          );
         return workspace.sync(
           response.catalog,
           (ref, offset) => fetchWorkspaceArtifact(session, ref.id, offset),

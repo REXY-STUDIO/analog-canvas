@@ -134,6 +134,7 @@ test("grants a browser Agent, edits through the live host, and shares undo", asy
   let browserSocket: WebSocketRoute | null = null;
   let sessionCreates = 0;
   let revokeControls = 0;
+  let contextRevision: string | undefined;
 
   await page.routeWebSocket(
     `**/api/agent/sessions/${sessionId}/editor`,
@@ -141,7 +142,12 @@ test("grants a browser Agent, edits through the live host, and shares undo", asy
       expect(socket.protocols()).toEqual(["icm-agent-session", editorSecret]);
       browserSocket = socket;
       socket.onMessage((message) => {
-        responses.push(JSON.parse(String(message)) as SessionMessage);
+        const parsed = JSON.parse(String(message));
+        if (parsed.kind === "heartbeat") {
+          contextRevision = parsed.contextRevision;
+          socket.send(JSON.stringify({ ...parsed, kind: "heartbeat-ack" }));
+        }
+        responses.push(parsed as SessionMessage);
       });
     },
   );
@@ -244,6 +250,7 @@ test("grants a browser Agent, edits through the live host, and shares undo", asy
         requestId,
         sentAt: new Date().toISOString(),
         kind: "circuit-request",
+        contextRevision,
         payload,
       }),
     );
@@ -282,6 +289,7 @@ test("grants a browser Agent, edits through the live host, and shares undo", asy
         requestId,
         sentAt: new Date().toISOString(),
         kind: "file-request",
+        contextRevision,
         payload,
       }),
     );
@@ -319,6 +327,7 @@ test("grants a browser Agent, edits through the live host, and shares undo", asy
         requestId,
         sentAt: new Date().toISOString(),
         kind: "project-request",
+        contextRevision,
         payload,
       }),
     );
@@ -680,14 +689,14 @@ test("restores the same paired working copy through refresh and Gallery without 
   ).toMatchObject({ authorization: "paused", editor: "attached" });
   expect(sessionCreates).toBe(1);
   await page.goto("/");
-  await expect(page.getByTestId("gallery-agent-return")).toBeVisible();
+  await expect(page.getByTestId("gallery-agent-return")).toHaveCount(0);
   await expect
     .poll(
       async () =>
         (await client.status(session.sessionId, session.agentToken)).editor,
     )
-    .toBe("detached");
-  await page.getByTestId("gallery-agent-return").click();
+    .toBe("attached");
+  await page.getByTestId("gallery-editor-link").click();
   await expect(page.getByTestId("active-instance-count")).toHaveText("1");
   await page.getByTestId("open-agent").click();
   await expect(panel.getByTestId("agent-status")).toHaveText("Paused");
@@ -706,7 +715,242 @@ test("restores the same paired working copy through refresh and Gallery without 
       async () =>
         (await client.status(session.sessionId, session.agentToken)).editor,
     )
-    .toBe("detached");
+    .toBe("attached");
+});
+
+test("keeps pairing across Project tabs, rejects old writes and copies through the workspace transaction", async ({
+  page,
+  baseURL,
+}) => {
+  await page.goto("/editor?new=1");
+  await page.getByTestId("open-agent").click();
+  const panel = page.getByTestId("connect-agent-panel");
+  const handoff = await panel.getByTestId("agent-copy-text").inputValue();
+  const { claimCode } = JSON.parse(handoff.match(/Claim: (.+)/u)![1]!);
+  const client = new AgentHttpClient({ baseUrl: baseURL! });
+  const session = await client.claim(claimCode);
+  await expect(panel.getByTestId("agent-status")).toHaveText("Connected");
+  const originalContext = client.contextRevision;
+  const write = {
+    apiVersion: "3.0" as const,
+    operation: "transact" as const,
+    documentId: session.documentIds[0]!,
+    requestId: "workspace-source",
+    transactionId: "workspace-source",
+    expectedRevision: 0,
+    edits: [
+      {
+        kind: "add_instance" as const,
+        instance: {
+          id: "workspace-R",
+          symbolId: "resistor",
+          placement: {
+            position: { x: 300, y: 200 },
+            rotation: 0 as const,
+            mirror: "none" as const,
+          },
+        },
+      },
+    ],
+  };
+  expect(
+    await client.circuit(session.sessionId, session.agentToken, write),
+  ).toMatchObject({ ok: true });
+  await panel.getByRole("button", { name: "Close Agent dialog" }).click();
+  await page
+    .getByRole("button", { name: "New project tab", exact: true })
+    .click();
+  await expect(page.getByTestId("active-instance-count")).toHaveText("0");
+  // Use the original context explicitly: this may have the same logical Project/Cell IDs.
+  const rejected = await page.request.post(
+    `${baseURL}/api/agent/sessions/${session.sessionId}/circuit`,
+    {
+      headers: {
+        authorization: `Bearer ${session.agentToken}`,
+        "x-agent-context": originalContext!,
+      },
+      data: {
+        ...write,
+        requestId: "stale-workspace-write",
+        transactionId: "stale-workspace-write",
+      },
+    },
+  );
+  expect(await rejected.json()).toMatchObject({
+    error: { code: "PROJECT_CONTEXT_STALE" },
+  });
+  expect(
+    await client.status(session.sessionId, session.agentToken),
+  ).toMatchObject({ authorization: "active", editor: "attached" });
+  const list = await client.projects(session.sessionId, session.agentToken, {
+    apiVersion: "3.0",
+    requestId: "workspace-list",
+    operation: "workspace",
+    request: { action: "list" },
+  });
+  if (
+    !list.ok ||
+    list.operation !== "workspace" ||
+    list.result.action !== "list"
+  )
+    throw new Error(JSON.stringify(list));
+  expect(list.result.projects).toHaveLength(2);
+  const activeWorkspaceId = list.result.activeWorkspaceId;
+  const target = list.result.projects.find(
+    (p) => p.workspaceId === activeWorkspaceId,
+  )!;
+  const source = list.result.projects.find(
+    (p) => p.workspaceId !== target.workspaceId,
+  )!;
+  const copy = await client.projects(session.sessionId, session.agentToken, {
+    apiVersion: "3.0",
+    requestId: "workspace-copy",
+    operation: "workspace",
+    request: {
+      action: "copy",
+      sourceWorkspaceId: source.workspaceId,
+      sourceDocumentId: source.cells[0]!.documentId,
+      sourceRevision: source.cells[0]!.revision,
+      sourceStructureRevision: source.structureRevision,
+      targetWorkspaceId: target.workspaceId,
+      targetDocumentId: target.cells[0]!.documentId,
+      expectedRevision: target.cells[0]!.revision,
+      expectedStructureRevision: target.structureRevision,
+      offset: { x: 100, y: 100 },
+    },
+  });
+  expect(copy).toMatchObject({
+    ok: true,
+    result: {
+      action: "copy",
+      instanceIds: [expect.any(String)],
+      mapping: {
+        objects: { instances: { "workspace-R": expect.any(String) } },
+      },
+    },
+  });
+  await expect(page.getByTestId("active-instance-count")).toHaveText("1");
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(page.getByTestId("active-instance-count")).toHaveText("0");
+  expect(
+    await client.projects(session.sessionId, session.agentToken, {
+      apiVersion: "3.0",
+      requestId: "workspace-activate",
+      operation: "workspace",
+      request: { action: "activate", workspaceId: source.workspaceId },
+    }),
+  ).toMatchObject({ ok: true });
+  await expect(page.getByTestId("active-instance-count")).toHaveText("1");
+});
+
+test("workspace Cloud operations reuse GUI open validation, save conflicts and Save As", async ({
+  page,
+  baseURL,
+}) => {
+  const project = createEmptyProject("cloud-project", "Cloud source");
+  const record = {
+    id: "cloud-source",
+    name: project.name,
+    revision: 1,
+    schemaVersion: project.schemaVersion,
+    updatedAt: "2026-09-22T00:00:00.000Z",
+    projectText: serializeProject(project),
+  };
+  const writes: string[] = [];
+  await page.route("**/api/projects", (route) => {
+    if (route.request().method() === "GET")
+      return route.fulfill({ json: { projects: [record] } });
+    writes.push("new");
+    return route.fulfill({
+      json: {
+        project: {
+          ...record,
+          id: "cloud-copy",
+          ...route.request().postDataJSON(),
+        },
+      },
+    });
+  });
+  await page.route("**/api/projects/cloud-source", (route) => {
+    if (route.request().method() === "GET")
+      return route.fulfill({ json: { project: record } });
+    writes.push("conflict");
+    expect(route.request().headers()["if-match"]).toBe("revision-1");
+    return route.fulfill({
+      status: 409,
+      json: { error: "revision-conflict", project: { ...record, revision: 2 } },
+    });
+  });
+  await page.route("**/api/projects/cloud-invalid", (route) =>
+    route.fulfill({
+      json: {
+        project: {
+          ...record,
+          id: "cloud-invalid",
+          projectText: "not a project",
+        },
+      },
+    }),
+  );
+  await page.goto("/editor?new=1");
+  await page.getByTestId("open-agent").click();
+  const panel = page.getByTestId("connect-agent-panel");
+  const handoff = await panel.getByTestId("agent-copy-text").inputValue();
+  const { claimCode } = JSON.parse(handoff.match(/Claim: (.+)/u)![1]!);
+  const client = new AgentHttpClient({ baseUrl: baseURL! });
+  const session = await client.claim(claimCode);
+  await expect(panel.getByTestId("agent-status")).toHaveText("Connected");
+  let requestNumber = 0;
+  const workspace = (
+    request: Extract<
+      Parameters<AgentHttpClient["projects"]>[2],
+      { operation: "workspace" }
+    >["request"],
+  ) =>
+    client.projects(session.sessionId, session.agentToken, {
+      apiVersion: "3.0",
+      operation: "workspace",
+      requestId: `cloud-${++requestNumber}`,
+      request,
+    });
+  expect(
+    await workspace({ action: "open", cloudProjectId: "cloud-invalid" }),
+  ).toMatchObject({ ok: false });
+  await expect(page.getByRole("tab")).toHaveCount(1);
+  const oldContext = client.contextRevision;
+  expect(
+    await workspace({ action: "open", cloudProjectId: "cloud-source" }),
+  ).toMatchObject({ ok: true });
+  await expect(page.getByRole("tab")).toHaveCount(2);
+  await expect
+    .poll(
+      async () =>
+        (await client.status(session.sessionId, session.agentToken))
+          .contextRevision,
+    )
+    .not.toBe(oldContext);
+  expect(
+    await workspace({ action: "open", cloudProjectId: "cloud-source" }),
+  ).toMatchObject({ ok: true });
+  await expect(page.getByRole("tab")).toHaveCount(2);
+  expect(await workspace({ action: "save" })).toMatchObject({
+    ok: false,
+    error: { code: "CLOUD_SAVE_CONFLICT" },
+  });
+  expect(await workspace({ action: "save", asNew: true })).toMatchObject({
+    ok: true,
+    result: { project: { id: "cloud-copy" } },
+  });
+  expect(writes).toEqual(["conflict", "new"]);
+  const listed = await workspace({ action: "list" });
+  expect(listed).toMatchObject({
+    ok: true,
+    result: {
+      projects: expect.arrayContaining([
+        expect.objectContaining({ cloudProjectId: "cloud-copy" }),
+      ]),
+    },
+  });
 });
 
 test("keeps one Project session through Cell switches and preserves an acknowledged Agent edit across a render crash", async ({

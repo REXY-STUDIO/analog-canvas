@@ -115,7 +115,13 @@ import { clipboardPreviewDocument } from "../features/clipboard/clipboard";
 import {
   prepareProjectCopy,
   applyProjectCopyPlacement,
+  captureProjectCopy,
+  planProjectCopyPlacement,
 } from "../features/clipboard/project-copy";
+import type {
+  AgentProjectResourceRequest,
+  AgentProjectResourceResponse,
+} from "@icm/agent-adapter";
 import { clipboardPlacementAnchor } from "../features/clipboard/clipboard";
 import { useCircuitClipboard } from "../features/clipboard/use-circuit-clipboard";
 import {
@@ -317,8 +323,12 @@ import { BrowserSimulationSession } from "../features/simulation/browser-simulat
 import { ProjectRunHistory } from "../features/simulation/project-run-history";
 import { createAgentSemanticIntentHandler } from "../agent/agent-semantic-intent-handler";
 import { PUBLIC_AGENT_UI_ENABLED } from "../agent/public-agent-ui";
-import { useAgentSession } from "../agent/use-agent-session";
+import {
+  useEditorAgentSession,
+  WorkspaceAgentProvider,
+} from "../agent/workspace-agent";
 import { peekAgentSessionRecovery } from "../agent/session-recovery";
+export { WorkspaceAgentProvider } from "../agent/workspace-agent";
 import type { AgentFileCandidateSummary } from "@icm/agent-adapter";
 import { referencedDocumentId } from "../document/editor-session";
 import { useInteractionState } from "../interaction/interaction-state";
@@ -507,11 +517,13 @@ export function App(props: AppProps) {
   }, []);
   if (!boot) return <div role="status">Restoring project tabs…</div>;
   return (
-    <WorkspaceEditor
-      {...props}
-      restoredWorkspace={boot.workspace}
-      workspaceError={boot.error ?? null}
-    />
+    <WorkspaceAgentProvider>
+      <WorkspaceEditor
+        {...props}
+        restoredWorkspace={boot.workspace}
+        workspaceError={boot.error ?? null}
+      />
+    </WorkspaceAgentProvider>
   );
 }
 
@@ -981,8 +993,30 @@ function WorkspaceEditor({
   }, [publishGalleryOpen]);
   const [agentFileCandidate, setAgentFileCandidate] =
     useState<AgentFileCandidateSummary | null>(null);
+  // Execution and artifacts belong to their originating controller, not the
+  // currently selected tab. Re-selecting a tab restores the same service.
+  const agentProjectResources = useRef(
+    new Map<
+      EditorDocumentController,
+      Map<
+        string,
+        {
+          files: BrowserAgentFileHost;
+          history: ProjectRunHistory;
+          simulation: BrowserAgentSimulationHost;
+        }
+      >
+    >(),
+  );
+  let resources = agentProjectResources.current.get(editorDocumentController);
+  if (!resources) {
+    resources = new Map();
+    agentProjectResources.current.set(editorDocumentController, resources);
+  }
+  const resourceKey = `${projectSessionId}:${simulationTransport}`;
   const browserAgentFileHost = useMemo(
     () =>
+      resources.get(resourceKey)?.files ??
       new BrowserAgentFileHost({
         transport: simulationTransport,
         getProjectSessionId: () => editorDocumentController.projectSessionId,
@@ -996,18 +1030,20 @@ function WorkspaceEditor({
         dispatchProjectTransaction: (request) =>
           browserAgentHost.dispatchProjectTransaction(request),
       }),
-    [editorDocumentController, projectSessionId, simulationTransport],
+    [editorDocumentController, resourceKey, simulationTransport],
   );
   const projectRunHistory = useMemo(
-    () => new ProjectRunHistory(editorDocumentController.project.id),
-    [editorDocumentController, projectSessionId],
+    () =>
+      resources.get(resourceKey)?.history ??
+      new ProjectRunHistory(editorDocumentController.project.id),
+    [editorDocumentController, resourceKey],
   );
   useEffect(() => {
     projectRunHistory.activate();
-    return () => projectRunHistory.dispose();
   }, [projectRunHistory]);
   const browserAgentSimulationHost = useMemo(
     () =>
+      resources.get(resourceKey)?.simulation ??
       new BrowserAgentSimulationHost({
         runHistory: projectRunHistory,
         owner: "agent",
@@ -1020,13 +1056,33 @@ function WorkspaceEditor({
       browserAgentFileHost.simulationFiles,
       projectRunHistory,
       editorDocumentController,
-      projectSessionId,
+      resourceKey,
       simulationTransport,
     ],
   );
+  resources.set(resourceKey, {
+    files: browserAgentFileHost,
+    history: projectRunHistory,
+    simulation: browserAgentSimulationHost,
+  });
+  useEffect(
+    () => () => {
+      for (const group of agentProjectResources.current.values())
+        for (const resource of group.values()) resource.history.dispose();
+    },
+    [],
+  );
+  const agentWorkspaceRef = useRef<
+    (
+      request: Extract<AgentProjectResourceRequest, { operation: "workspace" }>,
+    ) => Promise<AgentProjectResourceResponse>
+  >(async () => {
+    throw new Error("Workspace is initializing");
+  });
   const browserAgentProjectHost = useMemo(
     () =>
       new BrowserAgentProjectHost({
+        workspace: (request) => agentWorkspaceRef.current(request),
         getProjectSessionId: () => editorDocumentController.projectSessionId,
         getProject: () => editorDocumentController.project,
         getActiveDocumentId: () => editorDocumentController.document.id,
@@ -1338,12 +1394,10 @@ function WorkspaceEditor({
     publishSession,
     startupCloudProjectId,
   ]);
-  const agentSession = useAgentSession({
+  const agentSession = useEditorAgentSession({
     // A restored workspace is already the requested circuit. Resume its
     // matching Agent only after the active Project and working copy are installed.
-    recover:
-      !hasExplicitBootTarget ||
-      (restoredWorkspace !== null && !restoringWorkspace),
+    recover: true,
     beforeConnect: async () => {
       const snapshot = await captureAuthoredProject();
       if (snapshot) {
@@ -4907,7 +4961,8 @@ function WorkspaceEditor({
   type TabSession = ReturnType<typeof captureTabSession>;
   function restoreTabSession(session: TabSession) {
     resetInteractionState();
-    browserAgentFileHost.clear();
+    // The outgoing tab still owns its artifacts and expiring workspaces.
+    // Selection changes hide its UI, not its file service.
     setAgentFileCandidate(null);
     setImportReport(null);
     setImportReviewOpen(false);
@@ -5017,6 +5072,9 @@ function WorkspaceEditor({
           );
         const session: TabSession = {
           ...saved,
+          // Cloud publication metadata may change while the page is closed.
+          // Keep the local draft, but resolve its current link before publishing.
+          publication: saved.file.cloudBinding ? null : saved.publication,
           controller,
           cellViews: new Map(saved.cellViews),
           fit: false,
@@ -5144,8 +5202,6 @@ function WorkspaceEditor({
         );
         return false;
       }
-      if (!["idle", "revoked", "expired"].includes(agentSession.status))
-        await agentSession.revoke();
       const snapshot = await captureAuthoredProject();
       if (!snapshot) return false;
       cancelAllTransientInteraction();
@@ -5163,6 +5219,94 @@ function WorkspaceEditor({
       () => createTabSession(next, view, options),
       options.cloudBinding?.id,
     );
+  agentWorkspaceRef.current = async (envelope) => {
+    const request = envelope.request;
+    const { copyWorkspaceCell, listWorkspaceProjects, workspaceResponses } =
+      await import("../agent/workspace-copy");
+    const { fail, success } = workspaceResponses(envelope.requestId);
+    try {
+      const entries = projectTabs.entries();
+      if (request.action === "list")
+        return success({
+          action: "list",
+          activeWorkspaceId: projectTabs.activeId,
+          projects: listWorkspaceProjects(entries),
+        });
+      if (request.action === "activate") {
+        if (!entries.some((e) => e.id === request.workspaceId))
+          return fail("WORKSPACE_NOT_FOUND", "Workspace is no longer open");
+        const applied = await projectTabs.select(request.workspaceId);
+        return applied
+          ? success({ action: "activate", applied })
+          : fail(
+              "WORKSPACE_BUSY",
+              "Finish the current edit before switching Projects",
+            );
+      }
+      if (request.action === "open") {
+        const result = await openCloudProjectById(request.cloudProjectId, true);
+        return result.applied
+          ? success({ action: "open", applied: true })
+          : fail(
+              "CLOUD_OPEN_FAILED",
+              result.message ?? "Cloud Project was not opened",
+            );
+      }
+      if (request.action === "save") {
+        const outcome = await saveProjectToCloud(
+          undefined,
+          request.asNew === true,
+        );
+        if (outcome.status !== "saved")
+          return fail(
+            `CLOUD_SAVE_${outcome.status.toUpperCase().replaceAll("-", "_")}`,
+            outcome.status === "conflict"
+              ? `Cloud revision ${outcome.project.revision} conflicts with this working copy; nothing overwritten`
+              : "message" in outcome
+                ? outcome.message
+                : `Cloud save ${outcome.status}; local work retained`,
+          );
+        const { id, name, revision, updatedAt, schemaVersion } =
+          outcome.project;
+        return success({
+          action: "save",
+          project: { id, name, revision, updatedAt, schemaVersion },
+        });
+      }
+      const source = entries.find((e) => e.id === request.sourceWorkspaceId)
+        ?.session.controller;
+      const target = entries.find((e) => e.id === request.targetWorkspaceId);
+      if (!target)
+        return fail("WORKSPACE_NOT_FOUND", "Target Project is no longer open");
+      const copied = copyWorkspaceCell(
+        request,
+        source,
+        target.session.controller,
+        {
+          captureProjectCopy,
+          planProjectCopyPlacement,
+          applyProjectCopyPlacement,
+        },
+      );
+      if ("error" in copied)
+        return fail(copied.error.code, copied.error.message);
+      if (target.id === projectTabs.activeId) {
+        synchronizeExternalCommit();
+        void flushRecovery();
+      } else {
+        target.session.dirty = true;
+        target.session.unsafe = true;
+        target.session.file.persistenceState = "dirty";
+      }
+      projectTabs.changed();
+      return success(copied.result);
+    } catch (error) {
+      return fail(
+        "WORKSPACE_OPERATION_FAILED",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  };
   const allowNextBrowserUnload = useUnsavedWorkGuard(projectTabs.hasUnsafeTabs);
 
   const openAgentConnection = () => {

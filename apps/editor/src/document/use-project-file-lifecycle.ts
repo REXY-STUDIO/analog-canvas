@@ -260,6 +260,7 @@ export function useProjectFileLifecycle({
 
   async function performProjectSaveToCloud(
     candidate: CircuitProject,
+    asNew = false,
   ): Promise<CloudProjectSaveOutcome> {
     // Capture before the recovery/network awaits: save exactly the checked version.
     const savedCandidate = structuredClone(candidate);
@@ -272,7 +273,7 @@ export function useProjectFileLifecycle({
     await recovery.flushNow();
     const outcome = await saveCloudProject(
       savedCandidate,
-      cloudBinding,
+      asNew ? null : cloudBinding,
       fetch,
       galleryEntryId,
     );
@@ -340,9 +341,17 @@ export function useProjectFileLifecycle({
 
   function saveProjectToCloud(
     candidate?: CircuitProject,
+    asNew = false,
   ): Promise<CloudProjectSaveOutcome> {
     const inFlight = saveInFlightRef.current;
-    if (inFlight) return inFlight;
+    if (inFlight)
+      return asNew
+        ? Promise.resolve({
+            status: "rejected",
+            message:
+              "Another Cloud save is in progress; retry Save As after it completes",
+          })
+        : inFlight;
     const operation = (async (): Promise<CloudProjectSaveOutcome> => {
       const snapshot =
         candidate ??
@@ -352,7 +361,12 @@ export function useProjectFileLifecycle({
           status: "rejected",
           message: "Source edits need attention; no work was discarded",
         };
-      return performProjectSaveToCloud(snapshot);
+      if (liveSessionRef.current !== projectSessionId)
+        return {
+          status: "rejected",
+          message: "Project changed before Cloud save; no new save was started",
+        };
+      return performProjectSaveToCloud(snapshot, asNew);
     })().catch((error: unknown): CloudProjectSaveOutcome => {
       const message = error instanceof Error ? error.message : "Save failed";
       if (liveSessionRef.current === projectSessionId) {
@@ -673,7 +687,7 @@ export function useProjectFileLifecycle({
   async function openCloudProjectById(
     projectId: string,
     inTab = false,
-  ): Promise<void> {
+  ): Promise<{ applied: boolean; message?: string }> {
     const fetched = await openCloudProject(projectId);
     if (fetched.status !== "opened") {
       if (fetched.status === "not-found") forgetRecentCloudProject();
@@ -684,7 +698,7 @@ export function useProjectFileLifecycle({
             ? "That Cloud Project no longer exists"
             : `Could not reach Cloud Projects (${fetched.message})`,
       );
-      return;
+      return { applied: false, message: `Cloud open ${fetched.status}` };
     }
     const cloud = fetched.project;
     const staged = await stageProjectFile(
@@ -698,8 +712,12 @@ export function useProjectFileLifecycle({
       setStatus(
         `Cloud Project not opened — ${formatProjectOpenDiagnostics(staged.diagnostics)}`,
       );
-      return;
+      return {
+        applied: false,
+        message: formatProjectOpenDiagnostics(staged.diagnostics),
+      };
     }
+    let applied = false;
     const install = async () => {
       const baseline = {
         project: structuredClone(staged.project),
@@ -721,6 +739,7 @@ export function useProjectFileLifecycle({
         )
           return;
       } else replaceActiveProject(staged.project, defaultViewBox, openOptions);
+      applied = true;
       setStatus(`Opened Cloud Project ${cloud.name}`);
     };
     if (
@@ -728,9 +747,15 @@ export function useProjectFileLifecycle({
       serializeProject(staged.project) === serializeProject(project)
     ) {
       await install();
-      return;
+      return {
+        applied,
+        ...(applied
+          ? {}
+          : { message: "Finish the current edit before opening a Project" }),
+      };
     }
     await guardDirtyReplacement(`Open Cloud Project ${cloud.name}`, install);
+    return { applied };
   }
 
   useEffect(() => {
