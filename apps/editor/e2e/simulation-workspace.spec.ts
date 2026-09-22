@@ -101,11 +101,13 @@ test("simulation Agent entry is passive and reuses the existing connection panel
   await expect(panel.getByTestId("agent-copy-text")).toHaveValue(
     /sim-guide.claim/,
   );
+  // The native dialog correctly removes the background guide from the
+  // accessibility tree. Inspect the passive guide after closing the dialog.
+  await panel.getByRole("button", { name: "Close Agent dialog" }).click();
   await expect(
     guide.getByRole("button", { name: "View connection info", exact: true }),
   ).toBeVisible();
   expect(creates).toBe(1);
-  await panel.getByRole("button", { name: "Close Agent dialog" }).click();
   await expect.poll(() => socket !== null).toBe(true);
   socket!.send(
     JSON.stringify({
@@ -2332,6 +2334,7 @@ test("inline naming commits once on blur, cancels on Escape, and deletion uses a
   const input = workspace.getByRole("textbox", {
     name: "New simulation folder name",
   });
+  await expect(input).toHaveAttribute("autocomplete", "off");
   await input.fill("Gamma");
   // Switching selection must not implicitly create an experiment.
   await workspace
@@ -2384,6 +2387,7 @@ test("inline naming commits once on blur, cancels on Escape, and deletion uses a
   const fileName = workspace.getByRole("textbox", {
     name: "Relative file path",
   });
+  await expect(fileName).toHaveAttribute("autocomplete", "off");
   await fileName.fill("run.cir");
   await fileName.press("Enter");
   await expect(fileName).toHaveAttribute("aria-invalid", "true");

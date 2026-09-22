@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -10,6 +12,11 @@ import {
   CLOUD_PROJECT_LIMIT,
   type CloudProjectSummary,
 } from "./cloud-projects";
+const InlineConfirm = lazy(() =>
+  import("../../components/inline-confirm").then((module) => ({
+    default: module.InlineConfirm,
+  })),
+);
 
 export interface FileCommandMenuProps {
   projectStoreLabel: "Cloud Projects" | "Preview Projects";
@@ -24,7 +31,7 @@ export interface FileCommandMenuProps {
   onSave: () => void;
   onRefreshCloudProjects: () => void;
   onOpenCloudProject: (project: CloudProjectSummary) => void;
-  onDeleteCloudProject: (project: CloudProjectSummary) => void;
+  onDeleteCloudProject: (project: CloudProjectSummary) => void | Promise<void>;
   onImportProject: (file: File | null) => void;
   onImportSpice: (
     files: FileList | null,
@@ -126,6 +133,7 @@ export function FileCommandMenu({
   onRevert,
   onOpenRecovery,
 }: FileCommandMenuProps) {
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [openSubmenu, setOpenSubmenu] = useState<"import" | "export" | null>(
     null,
   );
@@ -146,7 +154,7 @@ export function FileCommandMenu({
       }}
     >
       <summary>File</summary>
-      <div className="command-popover">
+      <div className="command-popover" data-inline-confirm-menu>
         <button type="button" onClick={onNewProject}>
           New Project
         </button>
@@ -183,15 +191,22 @@ export function FileCommandMenu({
                 })}
               </time>
             </button>
-            <button
-              type="button"
-              aria-label={`Delete ${projectStoreItemLabel} ${project.name}`}
-              title={`Delete this ${projectStoreItemLabel}`}
-              disabled={project.id === activeCloudProjectId}
-              onClick={() => onDeleteCloudProject(project)}
-            >
-              Delete
-            </button>
+            <Suspense fallback={<button disabled>Delete</button>}>
+              <InlineConfirm
+                aria-label={`Delete ${projectStoreItemLabel} ${project.name}`}
+                title={`Delete this ${projectStoreItemLabel}`}
+                disabled={project.id === activeCloudProjectId}
+                open={deletingId === project.id}
+                onOpenChange={(open) =>
+                  setDeletingId((current) =>
+                    open ? project.id : current === project.id ? null : current,
+                  )
+                }
+                onConfirm={() => onDeleteCloudProject(project)}
+              >
+                Delete
+              </InlineConfirm>
+            </Suspense>
           </div>
         ))}
         <div>

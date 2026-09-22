@@ -48,14 +48,15 @@ test("project tabs append a partial selection and retain independent history, ca
     { steps: 5 },
   );
   await page.mouse.up();
+  await page.evaluate(() => navigator.clipboard.writeText("external text"));
   await page.keyboard.press("c");
   await expect(page.getByTestId("status")).toContainText("Circuit copied");
-  const fragment = await page.evaluate(() => navigator.clipboard.readText());
-  expect(fragment).toContain("analog-canvas/clipboard");
-  expect(JSON.parse(fragment).project.documents[0].instances).toHaveLength(2);
-  expect(
-    JSON.parse(fragment).project.documents[0].routes.length,
-  ).toBeGreaterThan(0);
+  await expect(page.getByTestId("copy-placement-preview")).toBeVisible();
+  // Plain C owns the internal fragment, leaving unrelated OS clipboard text
+  // alone. The placement below verifies its two devices and complete route.
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    "external text",
+  );
   const sourceView = await canvas.getAttribute("viewBox");
   const source = await saved(page);
   await page
@@ -150,11 +151,32 @@ test("tab file opening is additive and closing unsaved projects can be cancelled
     "true",
   );
   await insert(page, "capacitor", 500, 260);
-  page.once("dialog", (dialog) => dialog.dismiss());
+  await page.setViewportSize({ width: 360, height: 600 });
   await page.getByRole("button", { name: "Close tab Second circuit" }).click();
+  await expect(
+    page.getByRole("button", { name: "Keep open", exact: true }),
+  ).toBeFocused();
+  const closeStrip = page.getByTestId("project-tab-close-decision");
+  await expect(closeStrip.locator(".inline-confirm-decision")).toHaveText(
+    "Close without savingKeep open",
+  );
+  expect(
+    await closeStrip.evaluate(
+      (element) =>
+        element.scrollWidth <= element.clientWidth &&
+        element.getBoundingClientRect().height <= 44 &&
+        [...element.querySelectorAll("button:not([hidden])")].every(
+          (button) => button.getBoundingClientRect().right <= innerWidth,
+        ),
+    ),
+  ).toBe(true);
+  await page.screenshot({ path: "plan/inline-tab-close-narrow.png" });
+  await page.getByRole("button", { name: "Keep open", exact: true }).click();
   await expect(page.getByRole("tab")).toHaveCount(2);
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Close tab Second circuit" }).click();
+  await page
+    .getByRole("button", { name: "Close without saving", exact: true })
+    .click();
   await expect(page.getByRole("tab")).toHaveCount(1);
   await expect(page.getByTestId("active-instance-count")).toHaveText("1");
 });
@@ -244,9 +266,11 @@ test("plain C/V works between internal tabs when system clipboard permission is 
       configurable: true,
       value: {
         writeText: async () => {
+          document.documentElement.dataset.clipboardAccess = "requested";
           throw new Error("denied");
         },
         readText: async () => {
+          document.documentElement.dataset.clipboardAccess = "requested";
           throw new Error("denied");
         },
       },
@@ -285,6 +309,9 @@ test("plain C/V works between internal tabs when system clipboard permission is 
   await expect(page.getByTestId("active-instance-count")).toHaveText("1");
   await page.getByRole("tab").first().click();
   await expect(page.getByTestId("active-instance-count")).toHaveText("3");
+  await expect(page.locator("html")).not.toHaveAttribute(
+    "data-clipboard-access",
+  );
 });
 
 test("refresh restores every unsaved tab and active view without crossing browser windows", async ({
@@ -338,6 +365,9 @@ test("refresh restores every unsaved tab and active view without crossing browse
     .getByRole("button", { name: /Close tab / })
     .last()
     .click();
+  await page
+    .getByRole("button", { name: "Close without saving", exact: true })
+    .click();
   await page.reload();
   await expect(page.getByRole("tab")).toHaveCount(3);
   await other.close();
@@ -379,6 +409,9 @@ for (const modifier of ["Control", "Meta", "plain"]) {
       window.getSelection()!.addRange(range);
     });
     await page.getByTestId("schematic-canvas").focus();
+    const sourceRoutes = await page
+      .locator('[data-layer="routes"] polyline')
+      .count();
     await page.keyboard.press(key("c"));
     await expect(page.getByTestId("status")).toContainText("Circuit copied");
     if (modifier === "plain") {
@@ -386,10 +419,13 @@ for (const modifier of ["Control", "Meta", "plain"]) {
     } else {
       await expect(page.getByTestId("copy-placement-preview")).toHaveCount(0);
     }
-    const encoded = await page.evaluate(() => navigator.clipboard.readText());
-    const source = JSON.parse(encoded).project.documents[0];
-    expect(source.instances).toHaveLength(2);
-    expect(source.routes.length).toBeGreaterThan(0);
+    expect(sourceRoutes).toBeGreaterThan(0);
+    if (modifier !== "plain") {
+      const encoded = await page.evaluate(() => navigator.clipboard.readText());
+      const source = JSON.parse(encoded).project.documents[0];
+      expect(source.instances).toHaveLength(2);
+      expect(source.routes.length).toBe(sourceRoutes);
+    }
     await page
       .getByRole("button", { name: "New project tab", exact: true })
       .click();
@@ -402,7 +438,7 @@ for (const modifier of ["Control", "Meta", "plain"]) {
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("active-instance-count")).toHaveText("3");
     await expect(page.locator('[data-layer="routes"] polyline')).toHaveCount(
-      source.routes.length,
+      sourceRoutes,
     );
     const result = (await saved(page)).documents[0]!;
     expect(
