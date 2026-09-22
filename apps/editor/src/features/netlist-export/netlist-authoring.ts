@@ -105,13 +105,16 @@ export function nextCellPinName(
   reservedNames: ReadonlySet<string> = new Set(),
   appearance: "hollow" | "filled" = "hollow",
 ): string {
-  const occupied = new Set(
-    (document.netlist?.terminals ?? []).map((terminal) =>
-      terminal.name.trim().toLowerCase(),
+  const nameKey = (name: string): string =>
+    name.trim().toLowerCase().replace(/^(.)_/, "$1");
+  const unavailableNames = new Set([
+    ...(document.netlist?.terminals ?? []).map((terminal) =>
+      nameKey(terminal.name),
     ),
-  );
+    ...Array.from(reservedNames, nameKey),
+  ]);
   const unavailable = (name: string): boolean =>
-    occupied.has(name.toLowerCase()) || reservedNames.has(name.toLowerCase());
+    unavailableNames.has(nameKey(name));
   if (appearance === "filled") {
     let ordinal = 1;
     while (unavailable(`VB${ordinal}`)) ordinal += 1;

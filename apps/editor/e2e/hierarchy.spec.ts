@@ -974,8 +974,8 @@ test("changes Port subscript case in both labels and names with one undo", async
   await expect(firstLabel.locator('[data-text-run="subscript"]')).toHaveText(
     "nd",
   );
-  await expect(secondLabel.locator('[data-text-run="subscript"]')).toHaveCount(
-    0,
+  await expect(secondLabel.locator('[data-text-run="subscript"]')).toHaveText(
+    "ut",
   );
   await editDocumentStyleCode(page, (code) => {
     code.labels.subscript_case = "uppercase";
@@ -984,7 +984,10 @@ test("changes Port subscript case in both labels and names with one undo", async
   await expect(firstLabel.locator('[data-text-run="subscript"]')).toHaveText(
     "ND",
   );
-  await expect(secondLabel).toHaveText("out");
+  await expect(secondLabel).toHaveText("oUT");
+  await expect(secondLabel.locator('[data-text-run="subscript"]')).toHaveText(
+    "UT",
+  );
   const project = parseSavedProject(
     (await downloadBytes(page, "File", "Export Project File…")).toString(
       "utf8",
@@ -994,7 +997,7 @@ test("changes Port subscript case in both labels and names with one undo", async
     project.documents[0]!.netlist?.terminals.map(
       (port: { name: string }) => port.name,
     ),
-  ).toEqual(["I_ND", "out"]);
+  ).toEqual(["I_ND", "o_UT"]);
   expect(project.documents[0]!.presentation.labelSubscriptCase).toBe(
     "uppercase",
   );
@@ -1003,6 +1006,9 @@ test("changes Port subscript case in both labels and names with one undo", async
     "nd",
   );
   await expect(secondLabel).toHaveText("out");
+  await expect(secondLabel.locator('[data-text-run="subscript"]')).toHaveText(
+    "ut",
+  );
 });
 
 test("places an unreferenced top Cell in an ordinary new Cell", async ({
@@ -1204,13 +1210,13 @@ test("declares and places a Cell Pin on a new local Net", async ({ page }) => {
   await nameEditor.fill("OUT");
   await page.getByRole("button", { name: "Apply text changes" }).click();
   await expect(page.getByTestId("status")).toContainText(
-    "Renamed Cell Pin to OUT",
+    "Renamed Cell Pin to O_UT",
   );
   await page.getByTestId("hit-P1").click();
   await expect(
     page.locator('[data-object-id="instance-label-P1"]'),
   ).toContainText("OUT");
-  await setCellTerminalDirection(page, "OUT", "input");
+  await setCellTerminalDirection(page, "O_UT", "input");
   await expect(page.getByTestId("status")).toContainText(
     "Updated Cell port direction",
   );
@@ -1230,7 +1236,7 @@ test("declares and places a Cell Pin on a new local Net", async ({ page }) => {
   await canvas.click({ position: { x: 420, y: 180 } });
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("active-instance-count")).toHaveText("1");
-  await expect(canvas.locator('[data-pin-name="OUT"]')).toHaveCount(1);
+  await expect(canvas.locator('[data-pin-name="O_UT"]')).toHaveCount(1);
 
   await page.getByTestId("hit-X1").click();
   const layoutShelf = page.getByTestId("selection-shelf");
@@ -1244,7 +1250,7 @@ test("declares and places a Cell Pin on a new local Net", async ({ page }) => {
   await expect(page.getByTestId("status")).toContainText(
     "Resized ReusableStage",
   );
-  await layout.getByLabel("Cell symbol OUT pin side").selectOption("north");
+  await layout.getByLabel("Cell symbol O_UT pin side").selectOption("north");
   await expect(page.getByTestId("status")).toContainText(
     "Moved Cell symbol pin",
   );
@@ -1378,7 +1384,7 @@ test("declares a top Formal Cell Pin and exports the top interface", async ({
   await clickCommand(page, "Netlist", "Review Netlist Issues…");
   const preflight = page.getByRole("dialog", { name: "Check Report" });
   await expect(preflight.getByTestId("netlist-preview")).toContainText(
-    ".subckt dut VIN",
+    ".subckt dut V_IN",
   );
   await expect(preflight).not.toContainText("GENERATED_NET_NAME");
   await expect(preflight).not.toContainText("MISSING_DEVICE_DEFINITION");
@@ -1425,7 +1431,7 @@ test("copies and independently deletes Formal Cell Pins", async ({ page }) => {
     page
       .locator('[data-object-id="instance-label-P1"]')
       .locator('[data-text-run="subscript"]'),
-  ).toHaveCount(0);
+  ).toHaveText("IN");
   await expect(
     page.locator('[data-object-id="instance-label-P1-copy-1"]'),
   ).toHaveText("VIN");
@@ -1446,7 +1452,7 @@ test("copies and independently deletes Formal Cell Pins", async ({ page }) => {
     page
       .getByRole("dialog", { name: "Check Report" })
       .getByTestId("netlist-preview"),
-  ).toContainText(".subckt dut VIN");
+  ).toContainText(".subckt dut V_IN");
 });
 
 test("edits a Cell Pin name and RichText presentation in place", async ({
@@ -1474,7 +1480,7 @@ test("edits a Cell Pin name and RichText presentation in place", async ({
     page
       .locator('[data-object-id="instance-label-P1"]')
       .locator('[data-text-run="subscript"]'),
-  ).toHaveCount(0);
+  ).toHaveText("BIAS");
 
   await page.getByTestId("annotation-hit-instance-label-P1").dblclick();
   await page
@@ -1483,8 +1489,8 @@ test("edits a Cell Pin name and RichText presentation in place", async ({
   await page.getByRole("button", { name: "Apply text changes" }).click();
   const renamedLabel = page.locator('[data-object-id="instance-label-P1"]');
   await expect(renamedLabel).toHaveText("vINPUT");
-  await expect(renamedLabel.locator('[data-text-run="subscript"]')).toHaveCount(
-    0,
+  await expect(renamedLabel.locator('[data-text-run="subscript"]')).toHaveText(
+    "INPUT",
   );
 
   await page.getByTestId("annotation-hit-instance-label-P1").dblclick();
@@ -1507,7 +1513,7 @@ test("edits a Cell Pin name and RichText presentation in place", async ({
   const preflight = page.getByRole("dialog", { name: "Check Report" });
   await expect(preflight).not.toContainText("MISSING_DEVICE_DEFINITION");
   await expect(preflight.getByTestId("netlist-preview")).toContainText(
-    ".subckt dut VINP",
+    ".subckt dut V_INP",
   );
 });
 
@@ -1554,7 +1560,7 @@ test("hides empty parameters and does not expose a second declaration workflow",
 
   await runCellCommand(page, "Manage Cells…");
   const dialog = page.getByRole("dialog", { name: "Cell Manager" });
-  await expect(dialog.getByLabel("Formal port Vout direction")).toHaveValue(
+  await expect(dialog.getByLabel("Formal port V_out direction")).toHaveValue(
     "passive",
   );
   await expect(
@@ -1764,7 +1770,9 @@ test("allows distinct Cell Pins to expose one internal contact", async ({
   await canvas.click({ position: { x: 240, y: 200 } });
   // The existing Port is the visible current Net name, so a second Cell Pin
   // placed on the same contact adopts it while retaining independent identity.
-  await expect(page.getByTestId("status")).toContainText("Added Cell Pin Vin");
+  await expect(page.getByTestId("status")).toContainText(
+    "Added Cell Pin V_inp",
+  );
   await page.keyboard.press("Escape");
 
   await expect(page.getByTestId("hit-P1")).toBeVisible();
@@ -1840,7 +1848,7 @@ test("same-name Cell Pins stay independent while the final interface groups them
     page
       .locator('[data-object-id="instance-label-P2"]')
       .locator('[data-text-run="subscript"]'),
-  ).toHaveCount(0);
+  ).toHaveText("in");
   await runCellCommand(page, "Manage Cells…");
   const manager = page.getByRole("dialog", { name: "Cell Manager" });
   await expect(
@@ -1868,7 +1876,7 @@ test("same-name Cell Pins stay independent while the final interface groups them
   };
   const terminals = saved.documents[0]!.netlist.terminals;
   expect(terminals).toHaveLength(2);
-  expect(terminals.map((terminal) => terminal.name)).toEqual(["VIN", "vin"]);
+  expect(terminals.map((terminal) => terminal.name)).toEqual(["V_IN", "v_in"]);
   expect(new Set(terminals.map((terminal) => terminal.id)).size).toBe(2);
   expect(new Set(terminals.map((terminal) => terminal.netId)).size).toBe(2);
   expect(terminals.map((terminal) => terminal.direction)).toEqual([
@@ -1882,13 +1890,13 @@ test("same-name Cell Pins stay independent while the final interface groups them
 
   // Conflicting interface directions remain editable, but must be resolved
   // before a strict export can produce an executable subcircuit.
-  await setCellTerminalDirection(page, "VIN", "input");
+  await setCellTerminalDirection(page, "V_IN", "input");
   await clickCommand(page, "Netlist", "Review Netlist Issues…");
   const preview = await page
     .getByRole("dialog", { name: "Check Report" })
     .getByTestId("netlist-preview")
     .innerText();
-  expect(preview).toContain(".subckt dut VIN");
+  expect(preview).toContain(".subckt dut V_IN");
   expect(preview).not.toContain("ALIAS");
   await page.getByTestId("check-report-close").click();
 

@@ -1374,17 +1374,17 @@ test("P shortcut starts Cell Pin placement", async ({ page }) => {
     inputLabel.locator(
       '[data-text-run="span"][style*="font-style:italic"][style*="font-weight:700"]',
     ),
-  ).toHaveText("Vinp");
-  await expect(inputLabel.locator('[data-text-run="subscript"]')).toHaveCount(
-    0,
+  ).toHaveText("V");
+  await expect(inputLabel.locator('[data-text-run="subscript"]')).toHaveText(
+    "inp",
   );
 
   await canvas.click({ position: { x: 520, y: 180 } });
   await expect(page.getByTestId("status")).toContainText("Added Cell Pin Vinn");
   const outputLabel = page.locator('[data-object-id="instance-label-P2"]');
   await expect(outputLabel).toHaveText("Vinn");
-  await expect(outputLabel.locator('[data-text-run="subscript"]')).toHaveCount(
-    0,
+  await expect(outputLabel.locator('[data-text-run="subscript"]')).toHaveText(
+    "inn",
   );
   await page.keyboard.press("Escape");
 
@@ -1406,9 +1406,11 @@ test("P shortcut starts Cell Pin placement", async ({ page }) => {
   const secondBias = page.locator('[data-object-id="instance-label-P4"]');
   await expect(firstBias).toHaveText("VB1");
   await expect(secondBias).toHaveText("VB2");
-  await expect(firstBias.locator('[data-text-run="subscript"]')).toHaveCount(0);
-  await expect(secondBias.locator('[data-text-run="subscript"]')).toHaveCount(
-    0,
+  await expect(firstBias.locator('[data-text-run="subscript"]')).toHaveText(
+    "B1",
+  );
+  await expect(secondBias.locator('[data-text-run="subscript"]')).toHaveText(
+    "B2",
   );
   await openSelectionShelf(page);
   await expect(
@@ -1467,7 +1469,7 @@ test("Cell Pin deletion releases its interface and Base Net lifecycle", async ({
   ]);
   expect(saved.documents[0]!.connectivityEvidence).toEqual([]);
   expect(saved.documents[0]!.netlist.terminals).toEqual([
-    expect.objectContaining({ name: "BUS", interfaceInstanceIds: ["P1"] }),
+    expect.objectContaining({ name: "B_US", interfaceInstanceIds: ["P1"] }),
   ]);
 
   await page.getByTestId("hit-P1").click();
@@ -3535,7 +3537,7 @@ test("synchronizes a Net Label subscript with its electrical underscore name", a
     saved.documents[0].annotations.find(
       (candidate: { id: string }) => candidate.id === "net-label-route-ui-1",
     ).formatOverride,
-  ).toBeUndefined();
+  ).toBeDefined();
 
   await page.getByTestId("project-file").setInputFiles({
     name: "rich-net-label.icproj.json",
@@ -5817,11 +5819,8 @@ test("docked Properties JSON is the only global configuration surface", async ({
   await expect(
     settings.getByLabel("PMOS bulk Net (usually VDD) options"),
   ).toBeVisible();
-  await expect(
-    settings.getByLabel(
-      "Subscript case in this circuit (label + netlist) options",
-    ),
-  ).toBeVisible();
+  await expect(settings.getByLabel("Subscript case options")).toBeVisible();
+  await expect(settings.locator(".cm-property-unit")).toHaveCount(0);
   await settings.getByLabel("Font size options").selectOption("1.5");
   await expect(label).toHaveAttribute("font-size", "22.674");
   await expect(page.getByTestId("status")).toContainText(
@@ -5832,11 +5831,11 @@ test("docked Properties JSON is the only global configuration surface", async ({
   const style = JSON.parse(styleSource);
   expect(style.bulkDefaults).toEqual({ nmosNet: null, pmosNet: null });
   expect(style.labels).toEqual({
-    subscript_case: "preserve",
-    subscript_italic: true,
-    underscore_subscript: true,
-    subscript_after_first: false,
     first_letter_italic: true,
+    subscript_after_first: true,
+    subscript_case: "preserve",
+    subscript_italic: false,
+    underscore_subscript: true,
   });
   expect(style.canvas).toEqual({
     showGrid: true,
@@ -5854,8 +5853,23 @@ test("docked Properties JSON is the only global configuration surface", async ({
   expect(
     JSON.parse(await readDocumentStyleCode(page)).appearance.fontScale,
   ).toBe(1);
-  await clickDrawTool(page, "document-style");
+
+  // Object Properties replace global document settings instead of stacking
+  // a second code editor below them.
+  await page.keyboard.press("q");
   await expect(settings).toHaveCount(0);
+  await expect(page.getByLabel("Editable Canvas property code")).toBeVisible();
+
+  // A project code panel owns the same right-side workspace and closes the
+  // global settings surface rather than restoring it under the Netlist.
+  await clickDrawTool(page, "document-style");
+  await expect(settings).toBeVisible();
+  await page.getByTestId("netlist-panel-toggle").click();
+  await expect(settings).toHaveCount(0);
+  await expect(propertiesButton).toHaveAttribute("aria-pressed", "false");
+  await expect(
+    page.getByRole("complementary", { name: "Properties" }),
+  ).toHaveCount(0);
 });
 
 test("middle-click steers which way the wire corner turns", async ({
